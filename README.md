@@ -131,7 +131,7 @@ decision.
 | 3 | `glm-5.3` | raisonnement scientifique et logique poussé, coûteux, forte exigence analytique |
 | 4 | `glm-5.3-flash` | rapide et économique, excellent en usage réel pour les tâches courantes |
 | 5 | `minimax-m3` | bon compromis vitesse/agentique pour le tool calling et les actions séquentielles |
-| 6 | `nemotron-3-nano` | très haut débit, tâches simples uniquement, à éviter pour du raisonnement |
+| 6 | `nemotron-3-nano:30b` | très haut débit, tâches simples uniquement, à éviter pour du raisonnement |
 
 Adding a model is a reviewed change to [`docs/routing-grid.md`](docs/routing-grid.md) with benchmark
 evidence behind it — not a config-only act. See that file for the benchmark sources and pricing.

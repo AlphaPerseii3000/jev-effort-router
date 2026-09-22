@@ -15,6 +15,7 @@ import logging
 from typing import Any, Dict, Optional, Tuple
 
 from .audit import AuditLog
+from .catalog import ModelCatalog
 from .client import (
     REASON_DISABLED,
     REASON_EXCEPTION,
@@ -23,6 +24,7 @@ from .client import (
     REASON_SKIPPED_MODEL,
     REASON_SKIPPED_NO_MESSAGE,
     REASON_SKIPPED_PROVIDER,
+    REASON_SKIPPED_UNKNOWN_MODEL,
     REASON_USER_DATA,
     Decision,
     JevClient,
@@ -40,7 +42,7 @@ EFFORT_WIRE_KEY = "reasoning_effort"
 class Router:
     """Stateful routing engine: one instance per loaded plugin."""
 
-    def __init__(self, get_settings, get_state=None, *, client_factory=None) -> None:
+    def __init__(self, get_settings, get_state=None, *, client_factory=None, catalog=None) -> None:
         self._get_settings = get_settings
         self._get_state = get_state
         self._client_factory = client_factory or (lambda settings: JevClient(settings))
@@ -49,6 +51,7 @@ class Router:
         self._audit_key: Optional[tuple] = None
         self._client = None
         self._client_key: Optional[tuple] = None
+        self._catalog = catalog if catalog is not None else ModelCatalog()
 
     # -- wiring ------------------------------------------------------------------
 
@@ -144,6 +147,18 @@ class Router:
                 if fetched is None:
                     return None
                 decision = fetched
+                # A decision naming a model the provider does not have is worse than no decision:
+                # asking for it turns a degraded turn into a dead one (HTTP 404, no response).
+                # Leave the request exactly as the operator configured it.
+                if not self._provider_has(decision.model):
+                    logger.warning(
+                        "jev-router: Jev chose %r, which is not in the provider's catalog; "
+                        "leaving the turn on the configured model",
+                        decision.model,
+                    )
+                    self._record_skip(settings, REASON_SKIPPED_UNKNOWN_MODEL, where,
+                                      extra={"chosen_model": decision.model})
+                    return None
                 memo = Memo(
                     model=decision.model,
                     effort=decision.effort,
@@ -176,6 +191,21 @@ class Router:
             return None
 
     # -- decision plumbing -------------------------------------------------------
+
+    def _provider_has(self, model_id: str) -> bool:
+        """Whether the chosen model is safe to put on the wire, according to the provider catalog.
+
+        Answers ``True`` whenever the catalog has nothing to say — an absent cache, an unreadable
+        file or a host that exposes none of it all mean "no evidence", and the router must not
+        start refusing decisions on missing evidence. Only a catalog that lists models and does
+        not contain this one is a No.
+        """
+        try:
+            known = self._catalog.is_known(model_id)
+        except Exception as exc:  # noqa: BLE001 - a catalog probe never blocks a turn
+            logger.debug("jev-router: catalog check failed (%s: %s)", type(exc).__name__, exc)
+            return True
+        return known is not False
 
     def _lookup(
         self, settings: Settings, turn_id: str, session_id: str
@@ -311,6 +341,23 @@ class Router:
 
     def count(self, settings: Settings) -> int:
         return self.audit(settings).count()
+
+    def grid_report(self, settings: Settings) -> List[Dict[str, Any]]:
+        """The grid annotated with what the provider catalog says about each entry.
+
+        Empty when there is no catalog evidence, so a caller can tell "nothing to report" from
+        "every entry is fine".
+        """
+        report: List[Dict[str, Any]] = []
+        for entry in settings.grid:
+            try:
+                known = self._catalog.is_known(entry.model_id)
+            except Exception:  # noqa: BLE001 - a status view never raises
+                known = None
+            if known is None:
+                return []
+            report.append({"model": entry.model_id, "available": bool(known)})
+        return report
 
     def forget(self) -> None:
         self._memo.clear()

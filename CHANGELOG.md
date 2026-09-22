@@ -19,6 +19,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   it only produced an `unknown manifest field(s) ignored` warning on every load. The middleware is
   wired in code (`ctx.register_middleware("llm_request", ...)`); a regression test now asserts every
   manifest key is one the installed Hermes understands.
+- The grid entry `nemotron-3-nano` is now `nemotron-3-nano:30b`, the id the provider's own catalog
+  uses. The bare name produced `HTTP 404: model "nemotron-3-nano" not found` and failed the whole
+  turn — the one outcome the fail-open design exists to prevent.
+- New `catalog.py` cross-checks a decision against the provider's cached model list (read from the
+  host's `ollama_cloud_models_cache.json`, no credential and no socket) before the chosen model is
+  put on the wire. A model the catalog proves absent is refused: the turn keeps the configured model
+  and the refusal is recorded as `model_not_in_provider_catalog` with the model Jev picked. No
+  catalog evidence (absent/unreadable/unexpected) means "no verdict" and routing proceeds as before.
+  `jev_router_status` reports offending grid entries under `grid_unavailable`.
 
 ## [0.1.0] - 2026-09-22
 

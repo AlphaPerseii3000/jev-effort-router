@@ -15,11 +15,17 @@ The Choice options are exactly these six, in this order. The option string is
 | 3 | `glm-5.3` | raisonnement scientifique et logique poussé, coûteux, forte exigence analytique | — | GPQA Diamond 91.7 |
 | 4 | `glm-5.3-flash` | rapide et économique, excellent en usage réel pour les tâches courantes | — | highest measured Intelligence Index among flash models in real usage (41.8) |
 | 5 | `minimax-m3` | bon compromis vitesse/agentique pour le tool calling et les actions séquentielles | — | 210 tok/s, good agentic score |
-| 6 | `nemotron-3-nano` | très haut débit, tâches simples uniquement, à éviter pour du raisonnement | — | 346 TPS; avoid for reasoning |
+| 6 | `nemotron-3-nano:30b` | très haut débit, tâches simples uniquement, à éviter pour du raisonnement | — | 346 TPS; avoid for reasoning |
+
+**The id here is the wire id, verbatim — tag included.** The tier was written as
+`nemotron-3-nano` while the provider's catalog names it `nemotron-3-nano:30b`; the bare name
+returned `HTTP 404: model "nemotron-3-nano" not found` and killed the turn outright. Verify every
+grid entry against the provider's model list (the host caches it at
+`<HERMES_HOME>/ollama_cloud_models_cache.json`) rather than against memory or pricing pages.
 
 Pricing (reference only — the plugin does not use it for decisions): deepseek-v4.1-flash $0.15/$0.60
 off-peak first-party ($0.12/$0.48 on OpenRouter, doubled during UTC 01–04h and 06–10h on weekdays);
-kimi-k3 $3/$15; glm-5.3 $1/$4; glm-5.3-flash $0.15/$0.50; minimax-m3 $0.60/$2; nemotron-3-nano $0.06/$0.24.
+kimi-k3 $3/$15; glm-5.3 $1/$4; glm-5.3-flash $0.15/$0.50; minimax-m3 $0.60/$2; nemotron-3-nano:30b $0.06/$0.24.
 
 The rest of the profile's Ollama:cloud catalog (`glm-5.1`, `glm-5.2`, `deepseek-v4-flash`,
 `deepseek-v4-pro`, `kimi-k2.6`, `kimi-k2.7-code`, `nemotron-3-ultra`, `nemotron-3-super`, `gemma4`,

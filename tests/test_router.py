@@ -15,7 +15,7 @@ from config import load_settings
 from router import Router
 
 
-def build(tmp_path, transport, config=None, state=None):
+def build(tmp_path, transport, config=None, state=None, catalog=None):
     """A real router wired the way ``register(ctx)`` wires it."""
     settings = load_settings(lambda key, default=None: (config or {}).get(key, default))
     audit = StubState(tmp_path)
@@ -23,8 +23,16 @@ def build(tmp_path, transport, config=None, state=None):
         lambda: settings,
         get_state=lambda: audit,
         client_factory=lambda _settings: _ClientWith(transport, settings),
+        # No provider catalog: these tests are about routing, and an absent catalog is the
+        # "no evidence" answer, so a chosen model is never refused for a missing entry.
+        catalog=_NoCatalog() if catalog is None else catalog,
     )
     return router, settings
+
+
+class _NoCatalog:
+    def is_known(self, model_id, provider_prefixes=()):
+        return None
 
 
 def _ClientWith(transport, settings):
@@ -260,6 +268,7 @@ def test_a_raising_client_never_breaks_the_turn(tmp_path):
         lambda: settings,
         get_state=lambda: StubState(tmp_path),
         client_factory=lambda _settings: Exploding(),
+        catalog=_NoCatalog(),
     )
 
     assert route(router, ollama_request()) is None

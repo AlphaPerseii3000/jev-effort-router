@@ -62,6 +62,21 @@ ROUTE_SCHEMA = {
 }
 
 
+def _grid_unavailable(router, settings: Settings) -> list:
+    """Whatever the router's catalog knows about the grid, or an empty list.
+
+    A router double without the hook is not a failure: the status view has to work against any
+    router object, and "no report" is the same answer as "no evidence".
+    """
+    report = getattr(router, "grid_report", None)
+    if not callable(report):
+        return []
+    try:
+        return [row["model"] for row in report(settings) if not row.get("available")]
+    except Exception:  # noqa: BLE001 - an observability surface never raises
+        return []
+
+
 def _status(router, settings: Settings, recent: int = 5) -> str:
     records = router.tail(settings, limit=max(1, min(int(recent or 5), 50)))
     payload = {
@@ -82,6 +97,11 @@ def _status(router, settings: Settings, recent: int = 5) -> str:
         },
         "recent": records,
     }
+    # Only present when the provider catalog could actually be read: an empty list is omitted
+    # rather than reported as "every model is missing".
+    unavailable = _grid_unavailable(router, settings)
+    if unavailable:
+        payload["grid_unavailable"] = unavailable
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 

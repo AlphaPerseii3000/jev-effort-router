@@ -4,6 +4,11 @@ A Choice question's option list is load-bearing. Every extra option measurably d
 decision, so the built-in grid is exactly the six models that were benchmarked for this
 profile — see ``docs/routing-grid.md``. Operators can replace it through the ``grid``
 setting, which is the supported way to add a model once it has evidence behind it.
+
+**A model id here is the string that goes on the wire, verbatim.** ``nemotron-3-nano`` sat in
+this table while the provider's catalog named the tier ``nemotron-3-nano:30b``, so a perfectly
+confident decision became ``HTTP 404: model ... not found`` and killed the turn. ``catalog.py``
+now cross-checks the grid against the provider's own model list before a decision is acted on.
 """
 
 from __future__ import annotations
@@ -50,7 +55,7 @@ DEFAULT_GRID: Tuple[Entry, ...] = (
         "bon compromis vitesse/agentique pour le tool calling et les actions séquentielles",
     ),
     Entry(
-        "nemotron-3-nano",
+        "nemotron-3-nano:30b",
         "très haut débit, tâches simples uniquement, à éviter pour du raisonnement",
     ),
 )

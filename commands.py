@@ -49,6 +49,11 @@ def _status_text(router, settings: Settings, recent: int = 5) -> str:
         "",
         _grid_text(settings),
     ]
+    if payload.get("grid_unavailable"):
+        lines.append(
+            "  ⚠ not in the provider's catalog (a decision naming one of these is refused): "
+            + ", ".join(payload["grid_unavailable"])
+        )
     records = payload.get("recent") or []
     lines.append("")
     if not records:

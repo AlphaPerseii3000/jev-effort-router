@@ -13,7 +13,9 @@ def test_default_grid_is_the_six_benchmarked_models():
         "glm-5.3",
         "glm-5.3-flash",
         "minimax-m3",
-        "nemotron-3-nano",
+        # The wire id, tag included: the provider's catalog names this tier
+        # "nemotron-3-nano:30b" and rejects the bare name with HTTP 404.
+        "nemotron-3-nano:30b",
     ]
 
 
