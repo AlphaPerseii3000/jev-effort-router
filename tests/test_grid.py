@@ -23,7 +23,10 @@ def test_criteria_are_keyed_by_position_with_a_readable_profile():
     mapping = criteria(DEFAULT_GRID)
     assert set(mapping) == {"1", "2", "3", "4", "5", "6"}
     assert mapping["1"].startswith("deepseek-v4.1-flash: ")
-    assert "généraliste" in mapping["1"]
+    assert mapping["1"] == (
+        "deepseek-v4.1-flash: generalist, excellent value for money, 1M context, "
+        "the default choice"
+    )
     assert mapping["2"].startswith("kimi-k3: ")
 
 
@@ -33,7 +36,7 @@ def test_resolve_by_positional_key():
 
 def test_resolve_tolerates_an_echoed_option_string():
     # A decision endpoint that echoes "1: deepseek-v4.1-flash: ..." must not misroute.
-    assert resolve({}, "2: kimi-k3: code et agentiques haut de gamme", DEFAULT_GRID).model_id == "kimi-k3"
+    assert resolve({}, "2: kimi-k3: top-tier code and agentic work", DEFAULT_GRID).model_id == "kimi-k3"
     assert resolve({}, "kimi-k3", DEFAULT_GRID).model_id == "kimi-k3"
 
 

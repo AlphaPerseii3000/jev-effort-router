@@ -9,18 +9,19 @@ The Choice options are exactly these six, in this order. The option string is
 `"<model-id>: <one-line profile>"`; the model id is everything before the first `:`.
 
 Every model id here belongs to the **Ollama:Cloud** provider — this plugin routes nothing else. The
-profile text is sent to Jev verbatim and is part of the measured payload (the grid was benchmarked in
-French), so treat it as data rather than documentation: it is not a display string, and rewriting or
-translating it changes what Jev is choosing between.
+profile text is sent to Jev verbatim, **in English**, and is part of the measured payload, so treat it
+as data rather than documentation: it is not a display string, and rewriting or re-translating it
+changes what Jev is choosing between. The criteria were moved from French to English in this pass; the
+before/after measurement is recorded in the changelog.
 
 | # | Model id (option prefix) | Profile line sent to Jev | Context | Benchmark evidence |
 |---|---|---|---|---|
-| 1 | `deepseek-v4.1-flash` | généraliste, excellent rapport qualité/prix, contexte 1M, à privilégier par défaut | 1M | Terminal-Bench near paid flagships; young model (Sep 2026), watch in production |
-| 2 | `kimi-k3` | code et tâches agentiques haut de gamme, coûteux, à réserver au dev complexe | 1M | best open-weight on SWE-bench and GPQA across independent benches |
-| 3 | `glm-5.3` | raisonnement scientifique et logique poussé, coûteux, forte exigence analytique | — | GPQA Diamond 91.7 |
-| 4 | `glm-5.3-flash` | rapide et économique, excellent en usage réel pour les tâches courantes | — | highest measured Intelligence Index among flash models in real usage (41.8) |
-| 5 | `minimax-m3` | bon compromis vitesse/agentique pour le tool calling et les actions séquentielles | — | 210 tok/s, good agentic score |
-| 6 | `nemotron-3-nano:30b` | très haut débit, tâches simples uniquement, à éviter pour du raisonnement | — | 346 TPS; avoid for reasoning |
+| 1 | `deepseek-v4.1-flash` | generalist, excellent value for money, 1M context, the default choice | 1M | Terminal-Bench near paid flagships; young model (Sep 2026), watch in production |
+| 2 | `kimi-k3` | top-tier code and agentic work, expensive, reserve it for complex development tasks | 1M | best open-weight on SWE-bench and GPQA across independent benches |
+| 3 | `glm-5.3` | deep scientific and logical reasoning, expensive, for tasks with high analytical demands | — | GPQA Diamond 91.7 |
+| 4 | `glm-5.3-flash` | fast and economical, excellent in real use for everyday tasks | — | highest measured Intelligence Index among flash models in real usage (41.8) |
+| 5 | `minimax-m3` | good speed/agentic trade-off for tool calling and sequential actions | — | 210 tok/s, good agentic score |
+| 6 | `nemotron-3-nano:30b` | very high throughput, simple tasks only, avoid it for reasoning | — | 346 TPS; avoid for reasoning |
 
 **The id here is the wire id, verbatim — tag included.** The tier was written as
 `nemotron-3-nano` while the provider's catalog names it `nemotron-3-nano:30b`; the bare name

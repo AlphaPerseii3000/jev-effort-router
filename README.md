@@ -130,19 +130,19 @@ different models without anyone reconfiguring anything.
 Six Ollama:Cloud models, in this order. The list is deliberately short: every extra option measurably
 dilutes a Choice decision.
 
-The **Profile** column is shown in the language the criteria are actually sent to Jev in — the profiles
-live in [`grid.py`](grid.py) as French one-liners, because the decision model was benchmarked with them in
-French, and the text is part of the measured payload rather than a display string. Rewriting or translating
-them changes what Jev is choosing between, so treat them as data: to use your own wording, override `grid`.
+The **Profile** column is the criterion string sent to Jev, verbatim, in English. It lives in
+[`grid.py`](grid.py) as an English one-liner and is part of the measured payload rather than a display
+string: rewriting it changes what Jev is choosing between, so treat it as data. To use your own wording,
+override `grid`.
 
-| # | Model | Profile (as sent to Jev) | Meaning |
-|---|---|---|---|
-| 1 | `deepseek-v4.1-flash` | généraliste, excellent rapport qualité/prix, contexte 1M, à privilégier par défaut | generalist, best value, 1M context — the default choice |
-| 2 | `kimi-k3` | code et tâches agentiques haut de gamme, coûteux, à réserver au développement complexe | top-tier code and agentic work, expensive — reserve for complex development |
-| 3 | `glm-5.3` | raisonnement scientifique et logique poussé, coûteux, forte exigence analytique | deep scientific and logical reasoning, expensive — high analytical demands |
-| 4 | `glm-5.3-flash` | rapide et économique, excellent en usage réel pour les tâches courantes | fast and cheap, strong on everyday tasks |
-| 5 | `minimax-m3` | bon compromis vitesse/agentique pour le tool calling et les actions séquentielles | speed/agentic trade-off for tool calling and sequential actions |
-| 6 | `nemotron-3-nano:30b` | très haut débit, tâches simples uniquement, à éviter pour du raisonnement | very high throughput, simple tasks only — avoid for reasoning |
+| # | Model | Profile (as sent to Jev) |
+|---|---|---|
+| 1 | `deepseek-v4.1-flash` | generalist, excellent value for money, 1M context, the default choice |
+| 2 | `kimi-k3` | top-tier code and agentic work, expensive, reserve it for complex development tasks |
+| 3 | `glm-5.3` | deep scientific and logical reasoning, expensive, for tasks with high analytical demands |
+| 4 | `glm-5.3-flash` | fast and economical, excellent in real use for everyday tasks |
+| 5 | `minimax-m3` | good speed/agentic trade-off for tool calling and sequential actions |
+| 6 | `nemotron-3-nano:30b` | very high throughput, simple tasks only, avoid it for reasoning |
 
 Adding a model is a reviewed change to [`docs/routing-grid.md`](docs/routing-grid.md) with benchmark
 evidence behind it — not a config-only act. See that file for the benchmark sources and pricing.

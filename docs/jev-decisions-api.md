@@ -26,16 +26,16 @@ default so a silent model swap cannot change routing behaviour under the operato
   "questions": {
     "model_route": {
       "type": "choice",
-      "instructions": "Quel modèle est le plus adapté pour traiter cette tâche ?",
+      "instructions": "Which model is best suited to handle this task?",
       "criteria": {
-        "1": "deepseek-v4.1-flash: généraliste, ...",
-        "2": "kimi-k3: code et agentiques haut de gamme, coûteux",
+        "1": "deepseek-v4.1-flash: generalist, excellent value for money, 1M context…",
+        "2": "kimi-k3: top-tier code and agentic work, expensive",
         "...": "..."
       }
     },
     "reasoning_effort": {
       "type": "choice",
-      "instructions": "Quel niveau d'effort de raisonnement ce message nécessite-t-il ?",
+      "instructions": "Which level of reasoning effort does this message require?",
       "criteria": { "low": "...", "medium": "...", "high": "..." }
     }
   }

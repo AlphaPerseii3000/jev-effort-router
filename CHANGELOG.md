@@ -6,6 +6,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+### Changed
+
+- **The grid profiles are now English, which is a change of payload and therefore of behaviour.**
+  The six criterion strings in `DEFAULT_GRID` are sent to Jev verbatim and are what it weighs; they
+  were French, they are now English (`grid.py`, mirrored in `README.md`, `docs/routing-grid.md`,
+  `docs/jev-decisions-api.md` and `tests/test_grid.py`). The ids, the order and the six-entry count are
+  untouched, and the docstrings now say the criteria are sent in English and that rewording them is a
+  behaviour change rather than an editorial one.
+- Measured against the live endpoint, 4 calls per task before and 4 after (16 calls per variant, the
+  decision is not deterministic so one call proves nothing):
+
+  | Task | Chosen model, French → English | Mean confidence | Calls at/above the 0.5 threshold |
+  |---|---|---|---|
+  | trivial (`2+2`) | `glm-5.3-flash` → `glm-5.3-flash` | 0.477 → 0.350 | 1/4 → 0/4 |
+  | code refactor | `kimi-k3` → `kimi-k3` | 0.520 → 0.550 | 3/4 → 4/4 |
+  | demanding analysis | `glm-5.3` → `glm-5.3` | 0.893 → 0.893 | 4/4 → 4/4 |
+  | sequential tool calling | `minimax-m3` → `minimax-m3` | 0.962 → 0.980 | 4/4 → 4/4 |
+
+  All 16 choices are identical between the two variants: discrimination between the four task
+  categories is unchanged. The only material difference is confidence on the trivial task, which drops
+  from ~0.48 to ~0.35 — further below the 0.5 threshold than it already was. That task was already
+  degraded in 3 of 4 French calls, so the applied model (the configured default, option 1
+  `deepseek-v4.1-flash`) is unchanged in practice; but the English wording makes the tie between
+  `glm-5.3-flash` and `nemotron-3-nano:30b` for a trivial prompt slightly harder to break (0.46/0.36
+  versus 0.56/0.31). One task × 4 calls is thin evidence: this measures the mechanism and one
+  category-level regression in confidence, not a general quality verdict.
+
 ### Fixed
 
 - `jev_router_status` and `jev_router_route` now accept the arguments dict the host's tool registry

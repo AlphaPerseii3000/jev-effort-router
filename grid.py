@@ -5,6 +5,11 @@ decision, so the built-in grid is exactly the six models that were benchmarked f
 profile — see ``docs/routing-grid.md``. Operators can replace it through the ``grid``
 setting, which is the supported way to add a model once it has evidence behind it.
 
+**The descriptions below are the criteria strings sent to Jev verbatim, and they are sent in
+English.** They are part of the measured payload, not documentation: translating them changes
+what Jev weighs, which is why the grid is stated in one language and left alone. Rewording
+them (or flipping the language back) is a behaviour change that needs its own measurement.
+
 **A model id here is the string that goes on the wire, verbatim.** ``nemotron-3-nano`` sat in
 this table while the provider's catalog named the tier ``nemotron-3-nano:30b``, so a perfectly
 confident decision became ``HTTP 404: model ... not found`` and killed the turn. ``catalog.py``
@@ -33,30 +38,31 @@ class Entry:
 
 
 #: The six benchmarked Ollama:cloud models, in the order they are offered to Jev.
+#: The descriptions are data: they are sent to Jev verbatim as the criteria, in English.
 DEFAULT_GRID: Tuple[Entry, ...] = (
     Entry(
         "deepseek-v4.1-flash",
-        "généraliste, excellent rapport qualité/prix, contexte 1M, à privilégier par défaut",
+        "generalist, excellent value for money, 1M context, the default choice",
     ),
     Entry(
         "kimi-k3",
-        "code et tâches agentiques haut de gamme, coûteux, à réserver aux tâches complexes de développement",
+        "top-tier code and agentic work, expensive, reserve it for complex development tasks",
     ),
     Entry(
         "glm-5.3",
-        "raisonnement scientifique et logique poussé, coûteux, à réserver aux tâches à forte exigence analytique",
+        "deep scientific and logical reasoning, expensive, for tasks with high analytical demands",
     ),
     Entry(
         "glm-5.3-flash",
-        "rapide et économique, excellent en usage réel pour les tâches courantes",
+        "fast and economical, excellent in real use for everyday tasks",
     ),
     Entry(
         "minimax-m3",
-        "bon compromis vitesse/agentique pour le tool calling et les actions séquentielles",
+        "good speed/agentic trade-off for tool calling and sequential actions",
     ),
     Entry(
         "nemotron-3-nano:30b",
-        "très haut débit, tâches simples uniquement, à éviter pour du raisonnement",
+        "very high throughput, simple tasks only, avoid it for reasoning",
     ),
 )
 
