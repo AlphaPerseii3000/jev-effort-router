@@ -4,11 +4,10 @@ companions:
   - routing-grid.md
   - jev-decisions-api.md
   - integration-surface.md
-sources:
-  - ../../../brief-jev-router-hermes-agent.md
 ---
 
-> **Canonical contract.** This SPEC and the files in `companions:` are the complete, preservation-validated contract for what to build, test, and validate. Source documents listed in frontmatter are for traceability — consult them only if you need narrative rationale or prose color this contract intentionally omits.
+> **Canonical contract.** This SPEC and the files in `companions:` are the complete,
+> preservation-validated contract for what to build, test, and validate.
 
 # Jev Router — decision-model routing for Hermes Agent
 

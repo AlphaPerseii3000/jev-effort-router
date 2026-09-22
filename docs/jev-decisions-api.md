@@ -42,8 +42,9 @@ default so a silent model swap cannot change routing behaviour under the operato
 }
 ```
 
-`state` may be a string, an object, or an array; the object form is used here because TypeSafe's guidance
-is to send only the context each question needs and to reference nested values with backticked paths.
+`state` may be a string, an object, or an array; the object form is used here because the recommended
+pattern is to send only the narrow context each question needs and to reference nested values with
+backticked paths.
 `instructions` is the question; `criteria` is a map for `choice`, a list for `score`, a `{true, false}`
 map for `noul`. Questions are evaluated independently and in parallel — a decision cannot be conditioned
 on another answer at the wire level, which is why the effort question is asked independently and any

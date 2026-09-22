@@ -31,6 +31,17 @@ hermes plugins install AlphaPerseii3000/jev-router
 hermes plugins enable jev-router
 ```
 
+Hermes scans a community plugin on install and may refuse one that rewrites outgoing provider requests
+without an explicit override — the scan returns a CAUTION verdict here by design, because routing
+necessarily sends a bounded slice of conversation context to an external decision API. If the install is
+refused, review the findings and re-run with `--force`:
+
+```bash
+hermes plugins install AlphaPerseii3000/jev-router --force
+```
+
+To skip the scan entirely for this repository, set `plugins.scan_on_install` in your Hermes config.
+
 Then set the key Jev is reached with — OpenRouter serves the Decisions API, so no separate TypeSafe
 credential is needed:
 

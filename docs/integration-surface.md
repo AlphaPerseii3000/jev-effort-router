@@ -104,9 +104,9 @@ which it does for the recent-context window (a bounded tail, never the whole tra
 - `ctx.llm` → out-of-band model access; **not used** here (Jev is a plain HTTP call, and using `ctx.llm`
   to call a decision endpoint would be the wrong abstraction)
 
-Secrets: a `secret`-typed `config_schema` field stores only the `.env` name; the value is read with
-`os.environ`. `OPENROUTER_API_KEY` already exists in this profile's `.env`, so the plugin treats it as an
-ambient requirement and surfaces its absence once at registration.
+The API key is read from the process environment at call time and never from `config.yaml`; it is never
+logged and never included in an audit record. `OPENROUTER_API_KEY` is treated as an ambient requirement,
+and its absence is surfaced once at registration.
 
 ## Verification surface
 
