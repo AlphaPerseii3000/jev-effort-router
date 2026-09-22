@@ -123,6 +123,29 @@ def test_follow_up_requests_replay_the_turns_first_decision(tmp_path):
     assert transport.call_count == 1
 
 
+def test_replay_works_with_the_call_counter_hermes_really_sends(tmp_path):
+    """Hermes passes the *incremented* counter, so a turn's first call arrives as api_call_count=1.
+
+    Keying the memo store off `api_call_count == 0` therefore never stored anything and every
+    call of a turn re-decided. This reproduces the real values.
+    """
+    transport = StubTransport(
+        [
+            StubResponse(decision_payload("2", 0.9, "high", 0.9)),
+            StubResponse(decision_payload("5", 0.9, "low", 0.9)),
+        ]
+    )
+    router, _ = build(tmp_path, transport)
+
+    first = route(router, api_call_count=1, api_request_id="turn-1:api:1")
+    second = route(router, api_call_count=2, api_request_id="turn-1:api:2")
+    third = route(router, api_call_count=3, api_request_id="turn-1:api:3")
+
+    assert first["request"]["model"] == "kimi-k3"
+    assert [second["request"]["model"], third["request"]["model"]] == ["kimi-k3", "kimi-k3"]
+    assert transport.call_count == 1
+
+
 def test_a_new_turn_routes_again(tmp_path):
     transport = StubTransport(
         [

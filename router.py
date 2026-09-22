@@ -134,8 +134,7 @@ class Router:
             return None
 
         try:
-            first_call = _is_first_call(api_call_count)
-            memo, replayed = self._lookup(settings, turn_id, session_id, first_call)
+            memo, replayed = self._lookup(settings, turn_id, session_id)
 
             decision: Optional[Decision] = None
             if memo is not None:
@@ -153,9 +152,15 @@ class Router:
                     choice=decision.model_choice,
                     fallback_reasons=decision.fallback_reasons,
                 )
-                if first_call:
+                # Storing on "no memo found" rather than on an api_call_count test is deliberate:
+                # Hermes passes the *incremented* counter, so the first provider call of a turn
+                # arrives with api_call_count == 1 (see agent/turn_iteration_prep.py). Keying the
+                # store off that value silently never stored anything, and every call inside a
+                # turn's tool loop re-decided. Absence of a memo is the reliable "first call of
+                # this turn" signal.
+                if settings.route_per_turn:
                     self._memo.put_turn(turn_id, memo)
-                if not settings.route_per_turn:
+                else:
                     self._memo.put_session(session_id, memo)
 
             routed = self._apply(original_request, decision)
@@ -173,7 +178,7 @@ class Router:
     # -- decision plumbing -------------------------------------------------------
 
     def _lookup(
-        self, settings: Settings, turn_id: str, session_id: str, first_call: bool
+        self, settings: Settings, turn_id: str, session_id: str
     ) -> Tuple[Optional[Memo], bool]:
         """The memoized decision for this request, and whether it is a replay.
 
@@ -187,6 +192,8 @@ class Router:
         memo = self._memo.get_session(session_id)
         if memo is not None:
             return memo, True
+        # No session decision yet, but this turn may already have decided one: don't re-decide
+        # inside the same turn's tool loop.
         memo = self._memo.get_turn(turn_id)
         return memo, memo is not None
 
@@ -333,13 +340,6 @@ class _Where:
             }.items()
             if value
         }
-
-
-def _is_first_call(api_call_count: Any) -> bool:
-    try:
-        return int(api_call_count or 0) == 0
-    except (TypeError, ValueError):
-        return True
 
 
 def _decision_from_memo(memo: Memo) -> Decision:
