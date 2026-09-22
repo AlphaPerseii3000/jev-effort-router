@@ -1,0 +1,83 @@
+name: jev-router
+version: 0.1.0
+manifest_version: 2
+api_version: 1
+description: Route each user turn to the best Ollama:cloud model and reasoning effort via TypeSafe Jev's decision endpoint.
+author: AlphaPerseii3000
+license: MIT
+homepage: https://github.com/AlphaPerseii3000/jev-router
+tags: [routing, models, reasoning, ollama-cloud, decisions]
+provides_middleware:
+  - llm_request
+provides_hooks:
+  - on_session_end
+  - post_llm_call
+provides_tools:
+  - jev_router_status
+  - jev_router_route
+requires_env:
+  - name: OPENROUTER_API_KEY
+    description: OpenRouter API key - Jev is reached through OpenRouter's Decisions API.
+    url: https://openrouter.ai/settings/keys
+    secret: true
+config_schema:
+  enabled:
+    type: bool
+    default: true
+    label: Routing enabled
+    description: Master switch. When off, the plugin registers but never rewrites a request.
+  jev_model:
+    type: str
+    default: typesafe/jev-1.13
+    label: Jev model
+    description: Decision model id. Use typesafe/jev-latest to follow the newest Jev release.
+  confidence_threshold:
+    type: float
+    default: 0.5
+    label: Confidence threshold
+    description: Below this, the turn keeps the statically configured model and effort.
+  timeout_s:
+    type: float
+    default: 2.0
+    label: Jev timeout (seconds)
+    description: Budget for the decision call. Any timeout leaves the request untouched.
+  default_model:
+    type: str
+    default: deepseek-v4.1-flash
+    label: Fallback model
+    description: Model used when the decision is below the confidence threshold.
+  default_effort:
+    type: str
+    default: medium
+    choices: [low, medium, high]
+    label: Fallback effort
+  context_turns:
+    type: int
+    default: 4
+    label: Context turns
+    description: How many preceding conversation turns are sent to Jev as recent context.
+  route_per_turn:
+    type: bool
+    default: true
+    label: Route every turn
+    description: Off routes once per session instead of once per user turn.
+  audit_enabled:
+    type: bool
+    default: true
+    label: Audit log
+    description: Append one JSONL record per routed turn under the plugin data directory.
+  log_skips:
+    type: bool
+    default: true
+    label: Log skipped turns
+    description: Record why a turn was left unrouted (non-routed provider, unknown model, and so on).
+  include_user_message_in_audit:
+    type: bool
+    default: false
+    label: Include user message in audit
+    description: Off keeps the audit free of conversation content. Turn on only for local debugging.
+  grid:
+    type: list
+    default: null
+    label: Routing grid override
+    description: 'Optional list of entries, each "model-id: description", replacing the built-in six-model grid.'

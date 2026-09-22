@@ -1,0 +1,141 @@
+"""The routing grid: the models Jev may choose between, and the effort vocabulary.
+
+A Choice question's option list is load-bearing. Every extra option measurably dilutes the
+decision, so the built-in grid is exactly the six models that were benchmarked for this
+profile — see ``docs/routing-grid.md``. Operators can replace it through the ``grid``
+setting, which is the supported way to add a model once it has evidence behind it.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Iterable, List, Optional, Sequence, Tuple
+
+
+@dataclass(frozen=True)
+class Entry:
+    """One choice on the grid."""
+
+    #: The model id as it must appear in the provider's ``model`` field.
+    model_id: str
+    #: Human-readable profile line, sent to Jev as the criterion description.
+    description: str
+
+    @property
+    def criterion(self) -> str:
+        """The exact string Jev sees for this option."""
+        return f"{self.model_id}: {self.description}" if self.description else self.model_id
+
+
+#: The six benchmarked Ollama:cloud models, in the order they are offered to Jev.
+DEFAULT_GRID: Tuple[Entry, ...] = (
+    Entry(
+        "deepseek-v4.1-flash",
+        "généraliste, excellent rapport qualité/prix, contexte 1M, à privilégier par défaut",
+    ),
+    Entry(
+        "kimi-k3",
+        "code et tâches agentiques haut de gamme, coûteux, à réserver aux tâches complexes de développement",
+    ),
+    Entry(
+        "glm-5.3",
+        "raisonnement scientifique et logique poussé, coûteux, à réserver aux tâches à forte exigence analytique",
+    ),
+    Entry(
+        "glm-5.3-flash",
+        "rapide et économique, excellent en usage réel pour les tâches courantes",
+    ),
+    Entry(
+        "minimax-m3",
+        "bon compromis vitesse/agentique pour le tool calling et les actions séquentielles",
+    ),
+    Entry(
+        "nemotron-3-nano",
+        "très haut débit, tâches simples uniquement, à éviter pour du raisonnement",
+    ),
+)
+
+
+def parse_entry(raw: Any) -> Optional[Entry]:
+    """Parse ``"model-id: description"`` (or a ``{model_id, description}`` mapping)."""
+    if isinstance(raw, dict):
+        model_id = str(raw.get("model_id") or raw.get("model") or raw.get("id") or "").strip()
+        description = str(raw.get("description") or raw.get("profile") or "").strip()
+        return Entry(model_id, description) if model_id else None
+    text = str(raw or "").strip()
+    if not text:
+        return None
+    model_id, separator, description = text.partition(":")
+    model_id = model_id.strip()
+    if not model_id:
+        return None
+    return Entry(model_id, description.strip() if separator else "")
+
+
+def parse_grid(raw: Any) -> Tuple[Entry, ...]:
+    """Resolve the effective grid, falling back to :data:`DEFAULT_GRID` on nonsense input.
+
+    A partial or unparseable override is not a reason to route blindly: entries that do not
+    parse are dropped, and an override that yields nothing at all falls back to the default.
+    """
+    if raw is None:
+        return DEFAULT_GRID
+    items: Iterable[Any]
+    if isinstance(raw, str):
+        items = [line for line in raw.splitlines() if line.strip()]
+    elif isinstance(raw, Sequence):
+        items = raw
+    else:
+        return DEFAULT_GRID
+
+    parsed: List[Entry] = []
+    seen = set()
+    for item in items:
+        entry = parse_entry(item)
+        if entry is None or entry.model_id in seen:
+            continue
+        seen.add(entry.model_id)
+        parsed.append(entry)
+    return tuple(parsed) if parsed else DEFAULT_GRID
+
+
+def criteria(grid: Sequence[Entry]) -> dict:
+    """The ``criteria`` map for the model Choice question.
+
+    Keyed by position (``"1"``, ``"2"``, ...) rather than by model id: Jev returns the
+    criterion *key*, so a stable key decouples the answer from the description text and a
+    description can be rewritten without silently changing which model is selected.
+    """
+    return {str(index): entry.criterion for index, entry in enumerate(grid, start=1)}
+
+
+def resolve(criteria_map: dict, choice: Any, grid: Sequence[Entry]) -> Optional[Entry]:
+    """Map Jev's ``choice`` back to a grid entry, or ``None`` when it is not on the grid.
+
+    Accepts the positional key (the documented form), a ``"<index>: ..."`` key, or a raw
+    model id: a decision endpoint that echoes the option text instead of the key must not
+    turn into a silent misroute.
+    """
+    if choice is None:
+        return None
+    key = str(choice).strip()
+    if not key:
+        return None
+
+    by_position = {str(index): entry for index, entry in enumerate(grid, start=1)}
+    if key in by_position:
+        return by_position[key]
+
+    head = key.split(":", 1)[0].strip()
+    if head in by_position:
+        return by_position[head]
+    for candidate in (key, head):
+        for entry in grid:
+            if entry.model_id == candidate:
+                return entry
+
+    # Last resort: the echoed option string matches a criterion we sent.
+    for position, text in (criteria_map or {}).items():
+        if text == key:
+            return by_position.get(str(position))
+    return None

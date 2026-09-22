@@ -1,0 +1,32 @@
+# Changelog
+
+All notable changes to this project are documented here.
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
+[Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [0.1.0] - 2026-09-22
+
+First release.
+
+### Added
+
+- `llm_request` middleware that asks TypeSafe Jev (`typesafe/jev-1.13` over OpenRouter's Decisions API) for
+  a model and a reasoning-effort level on the first provider request of every user turn, and rewrites the
+  outgoing provider kwargs accordingly.
+- Six-model routing grid, keyed by position, with the criteria sent to Jev as `{"1": "<model>: <profile>"}`.
+- Per-family reasoning-effort translation table: never escalates, never invents a level, omits the field
+  rather than risk a 400. Kimi K3's `medium` maps to `high` per its documented vocabulary.
+- Confidence guard (default `0.5`): a distrusted answer degrades to the configured default model and
+  effort, and the turn still goes out routed but flagged.
+- One decision per user turn, memoised on `turn_id` so a turn's whole tool loop replays it without
+  disturbing the prompt cache. `route_per_turn: false` routes once per session instead.
+- Durable JSONL audit trail under `plugin-data/jev-router/routes.jsonl`: choice, probabilities,
+  confidence, alternatives, latency, degradation reasons and turn/session identifiers. Skipped turns are
+  recorded with their reason.
+- Fail-open on every path: timeout, HTTP error, malformed answer, low confidence, off-grid model, unknown
+  provider or API mode all leave the request byte-identical to a plugin-disabled run.
+- Operator surfaces: `/jev-router` slash command, `hermes jev-router` CLI family (`status`, `route`,
+  `grid`, `tail`, `reset`), and the `jev_router_status` / `jev_router_route` agent tools.
+- 74 tests, driving the real middleware callback against a stub Decisions API with no network access.
+
+[0.1.0]: https://github.com/AlphaPerseii3000/jev-router/releases/tag/v0.1.0
