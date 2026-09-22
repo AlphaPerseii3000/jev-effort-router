@@ -15,7 +15,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def _load_plugin():
-    name = "jev_router_catalog_status_test"
+    name = "jev_effort_router_catalog_status_test"
     if name not in sys.modules:
         spec = importlib.util.spec_from_file_location(
             name, ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
@@ -46,7 +46,7 @@ def test_status_flags_grid_entries_the_provider_lacks(tmp_path):
     cache = _write(tmp_path, ["deepseek-v4.1-flash", "kimi-k3"])
     ctx = _context(tmp_path, cache)
 
-    payload = json.loads(ctx.tools["jev_router_status"]["handler"]({"recent": 1}))
+    payload = json.loads(ctx.tools["jev_effort_router_status"]["handler"]({"recent": 1}))
 
     assert "kimi-k3" not in payload.get("grid_unavailable", [])
     assert "glm-5.3" in payload["grid_unavailable"]
@@ -59,7 +59,7 @@ def test_status_is_silent_when_the_grid_is_healthy(tmp_path):
     cache = _write(tmp_path, [entry.model_id for entry in DEFAULT_GRID])
     ctx = _context(tmp_path, cache)
 
-    payload = json.loads(ctx.tools["jev_router_status"]["handler"]({}))
+    payload = json.loads(ctx.tools["jev_effort_router_status"]["handler"]({}))
 
     assert "grid_unavailable" not in payload
 
@@ -68,7 +68,7 @@ def test_status_reports_nothing_without_a_catalog(tmp_path):
     """No evidence must not read as "every model is missing"."""
     ctx = _context(tmp_path, tmp_path / "absent.json")
 
-    payload = json.loads(ctx.tools["jev_router_status"]["handler"]({}))
+    payload = json.loads(ctx.tools["jev_effort_router_status"]["handler"]({}))
 
     assert "grid_unavailable" not in payload
 

@@ -19,7 +19,7 @@ from .config import Settings, api_key
 from .state import build_questions, build_state
 
 STATUS_SCHEMA = {
-    "name": "jev_router_status",
+    "name": "jev_effort_router_status",
     "description": (
         "Report the Jev router's state: whether routing is enabled, which decision model and "
         "endpoint it uses, the confidence threshold, the models it may choose between, and the "
@@ -38,7 +38,7 @@ STATUS_SCHEMA = {
 }
 
 ROUTE_SCHEMA = {
-    "name": "jev_router_route",
+    "name": "jev_effort_router_route",
     "description": (
         "Ask the Jev decision model which Ollama:cloud model and reasoning effort it would "
         "choose for a given task description, without changing the current session. Use it to "

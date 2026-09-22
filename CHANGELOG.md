@@ -6,6 +6,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-23
+
+### Changed
+
+- **Renamed: `jev-router` → `jev-effort-router`** (plugin id, repository, CLI command, slash command,
+  toolset, tools, Python package and pyproject distribution name).
+
+  The old name was both **taken and less accurate**. On GitHub, `jev-router` is a 340-star project
+  (`gargpratyush/jev-router`) that also picks the cheapest model, created six days before this one, and
+  `jev-router in:name` returns 155 repositories — searching the old name finds someone else. More
+  importantly, "router" alone under-sells what this plugin does: it decides the **model** *and* the
+  **reasoning effort**, per turn. Measured across the 241-entry catalog, no other entry does that —
+  every other routing entry picks a model and stops, and the only two entries that touch reasoning effort
+  (`reasoning-switch`, `compact-reasoning-label`) require you to move the level by hand. The name now
+  leads with the capability that has no competitor.
+
+  Renaming the id changes what a user installs, so this is a breaking change for anyone who installed
+  `jev-router` directly: remove it and install the new name. There were no catalog or released users at
+  the time of the rename.
+
+| Old | New |
+|---|---|
+| `hermes plugins install …/jev-router` | `hermes plugins install …/jev-effort-router` |
+| `/jev-router status` | `/jev-effort-router status` |
+| `hermes jev-router status` | `hermes jev-effort-router status` |
+| `jev_router_status` / `jev_router_route` | `jev_effort_router_status` / `jev_effort_router_route` |
+| `plugins.entries.jev-router.settings.*` | `plugins.entries.jev-effort-router.settings.*` |
+| `hermes-plugin-jev-router` (pip) | `hermes-plugin-jev-effort-router` |
+
+  The README also now leads with the model **and effort** combination instead of opening on the
+  Zürich→London 7.1-second benchmark, which sold speed rather than the capability this plugin is alone in
+  offering.
+
 ## [0.1.1] - 2026-09-23
 
 ### Changed
@@ -96,5 +129,6 @@ First release.
   `grid`, `tail`, `reset`), and the `jev_router_status` / `jev_router_route` agent tools.
 - 74 tests, driving the real middleware callback against a stub Decisions API with no network access.
 
+[0.2.0]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.2.0
 [0.1.1]: https://github.com/AlphaPerseii3000/jev-router/releases/tag/v0.1.1
 [0.1.0]: https://github.com/AlphaPerseii3000/jev-router/releases/tag/v0.1.0

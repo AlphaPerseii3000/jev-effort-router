@@ -32,4 +32,4 @@ jobs:
 
       - name: Validate the plugin manifest
         run: |
-          python -c "import yaml,pathlib; m=yaml.safe_load(pathlib.Path('plugin.yaml').read_text(encoding='utf-8')); assert m['name']=='jev-router'; assert pathlib.Path('__init__.py').is_file(); print('manifest ok:', m['version'])"
+          python -c "import yaml,pathlib; m=yaml.safe_load(pathlib.Path('plugin.yaml').read_text(encoding='utf-8')); assert m['name']=='jev-effort-router'; assert pathlib.Path('__init__.py').is_file(); print('manifest ok:', m['version'])"

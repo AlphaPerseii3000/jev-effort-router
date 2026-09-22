@@ -74,7 +74,7 @@ def test_routes_model_and_effort(tmp_path):
     # profile consumes to derive the top-level field, and Ollama rejects the whole call if it
     # reaches the wire.
     assert "reasoning_config" not in result["request"]
-    assert result["source"] == "jev-router"
+    assert result["source"] == "jev-effort-router"
 
 
 def test_request_is_built_from_the_pre_middleware_payload(tmp_path):

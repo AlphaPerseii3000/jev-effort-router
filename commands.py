@@ -1,4 +1,4 @@
-"""Human-facing surfaces: the ``/jev-router`` slash command and ``hermes jev-router``."""
+"""Human-facing surfaces: the ``/jev-effort-router`` slash command and ``hermes jev-effort-router``."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from .config import Settings
 from .tools import _hint_for, _status
 
 USAGE = (
-    "Usage: hermes jev-router <status|route|grid|tail|reset>\n"
+    "Usage: hermes jev-effort-router <status|route|grid|tail|reset>\n"
     "  status            routing state, settings, grid and the most recent decisions\n"
     "  route <task...>   ask Jev what it would pick for a task (no session change)\n"
     "  grid              list the models Jev may choose between\n"
@@ -19,8 +19,8 @@ USAGE = (
 )
 
 #: Slash-command name (no leading slash). Kept distinct from the CLI family name so a
-#: `/jev-router` inside a session and `hermes jev-router` on the shell are both natural.
-SLASH_NAME = "jev-router"
+#: `/jev-effort-router` inside a session and `hermes jev-effort-router` on the shell are both natural.
+SLASH_NAME = "jev-effort-router"
 
 
 def _grid_text(settings: Settings) -> str:
@@ -36,7 +36,7 @@ def _status_text(router, settings: Settings, recent: int = 5) -> str:
     """Plain-text status, for a shell or a chat reply."""
     payload = json.loads(_status(router, settings, recent=recent))
     lines = [
-        "jev-router",
+        "jev-effort-router",
         f"  enabled:        {payload['enabled']}",
         f"  api key:        {'present' if payload['api_key_present'] else 'MISSING (router is inert)'}",
         f"  jev model:      {payload['jev_model']}",
@@ -114,7 +114,7 @@ def _route_text(router, settings: Settings, task: str) -> str:
 
 def _handle(router, get_settings, args) -> int:
     settings = get_settings()
-    sub = getattr(args, "jev_router_command", None) or "status"
+    sub = getattr(args, "jev_effort_router_command", None) or "status"
 
     if sub == "status":
         print(_status_text(router, settings))
@@ -145,8 +145,8 @@ def _handle(router, get_settings, args) -> int:
 
 
 def setup_argparse(subparser: Any) -> None:
-    """Build the ``hermes jev-router`` argparse tree."""
-    sub = subparser.add_subparsers(dest="jev_router_command")
+    """Build the ``hermes jev-effort-router`` argparse tree."""
+    sub = subparser.add_subparsers(dest="jev_effort_router_command")
     sub.add_parser("status", help="Show routing state, grid and recent decisions")
     route = sub.add_parser("route", help="Ask Jev what it would pick for a task")
     route.add_argument("task", nargs="*", help="Task description to route")
@@ -161,7 +161,7 @@ def _command_handler(router, get_settings):
         try:
             return _handle(router, get_settings, args)
         except Exception as exc:  # noqa: BLE001 - a CLI must fail with a message, not a traceback
-            print(f"jev-router: {type(exc).__name__}: {exc}", file=sys.stderr)
+            print(f"jev-effort-router: {type(exc).__name__}: {exc}", file=sys.stderr)
             return 1
 
     return handler
@@ -179,7 +179,7 @@ def register_commands(ctx: Any, router, get_settings: Callable[[], Settings]) ->
     )
 
     def slash(raw_args: str) -> str:
-        """In-session ``/jev-router [status|grid|route <task>|tail [n]|reset]``."""
+        """In-session ``/jev-effort-router [status|grid|route <task>|tail [n]|reset]``."""
         try:
             tokens = (raw_args or "").split()
             action = tokens[0].lower() if tokens else "status"
@@ -190,7 +190,7 @@ def register_commands(ctx: Any, router, get_settings: Callable[[], Settings]) ->
             if action == "route":
                 task = " ".join(tokens[1:]).strip()
                 if not task:
-                    return "Usage: /jev-router route <task description>"
+                    return "Usage: /jev-effort-router route <task description>"
                 return _route_text(router, get_settings(), task)
             if action == "tail":
                 limit = 10
@@ -198,7 +198,7 @@ def register_commands(ctx: Any, router, get_settings: Callable[[], Settings]) ->
                     try:
                         limit = max(1, min(int(tokens[1]), 200))
                     except ValueError:
-                        return "Usage: /jev-router tail [n]"
+                        return "Usage: /jev-effort-router tail [n]"
                 records = router.tail(get_settings(), limit=limit)
                 if not records:
                     return "No audit records yet."
@@ -207,10 +207,10 @@ def register_commands(ctx: Any, router, get_settings: Callable[[], Settings]) ->
                 router.forget()
                 return "Memoized decisions dropped; the next turn re-routes."
             return (
-                "Usage: /jev-router [status|grid|tail [n]|reset|route <task>]"
+                "Usage: /jev-effort-router [status|grid|tail [n]|reset|route <task>]"
             )
         except Exception as exc:  # noqa: BLE001
-            return f"jev-router: {type(exc).__name__}: {exc}"
+            return f"jev-effort-router: {type(exc).__name__}: {exc}"
 
     ctx.register_command(
         SLASH_NAME,

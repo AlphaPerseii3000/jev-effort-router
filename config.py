@@ -2,7 +2,7 @@
 
 Every tunable comes from one place so a callback, a tool handler, a slash command and the
 CLI all read the same values. ``ctx.get_config`` already resolves
-``plugins.entries.jev-router.settings.<key>`` over the manifest default, so this module
+``plugins.entries.jev-effort-router.settings.<key>`` over the manifest default, so this module
 only adds coercion, validation and the "value is missing or nonsense" backstops.
 """
 

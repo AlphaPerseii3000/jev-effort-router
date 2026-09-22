@@ -6,7 +6,7 @@ a package — which collides with pytest's default ``prepend`` import mode, sinc
 as a test module is wrong.
 
 So the suite runs in ``importlib`` mode (set in ``pytest.ini``) and this file installs the plugin as a
-package named ``jev_router_under_test`` whose ``__path__`` is the repository root — the same arrangement
+package named ``jev_effort_router_under_test`` whose ``__path__`` is the repository root — the same arrangement
 Hermes' loader creates (it imports the plugin directory as ``hermes_plugins.<slug>``). Registering the
 bare submodule names as well keeps ``from config import load_settings`` working in the tests.
 
@@ -27,7 +27,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 TESTS = Path(__file__).resolve().parent
-PACKAGE = "jev_router_under_test"
+PACKAGE = "jev_effort_router_under_test"
 
 #: The repository root must contain ``__init__.py`` (Hermes' plugin requirement), so pytest sees a
 #: module beside the tests and tries to collect it. It is the plugin entry point, not a test module.

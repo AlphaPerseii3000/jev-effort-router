@@ -105,7 +105,7 @@ class Router:
         try:
             settings = self._get_settings()
         except Exception as exc:  # noqa: BLE001
-            logger.debug("jev-router: settings unavailable (%s); leaving request untouched", exc)
+            logger.debug("jev-effort-router: settings unavailable (%s); leaving request untouched", exc)
             return None
 
         where = _Where(
@@ -152,7 +152,7 @@ class Router:
                 # Leave the request exactly as the operator configured it.
                 if not self._provider_has(decision.model):
                     logger.warning(
-                        "jev-router: Jev chose %r, which is not in the provider's catalog; "
+                        "jev-effort-router: Jev chose %r, which is not in the provider's catalog; "
                         "leaving the turn on the configured model",
                         decision.model,
                     )
@@ -180,10 +180,10 @@ class Router:
 
             routed = self._apply(original_request, decision)
             self._record_route(settings, decision, where, api_call_count=api_call_count, replayed=replayed)
-            return {"request": routed, "source": "jev-router", "reason": decision.model}
+            return {"request": routed, "source": "jev-effort-router", "reason": decision.model}
         except Exception as exc:  # noqa: BLE001 - a router must never break a turn
             logger.warning(
-                "jev-router: routing failed (%s: %s); leaving request untouched",
+                "jev-effort-router: routing failed (%s: %s); leaving request untouched",
                 type(exc).__name__,
                 exc,
             )
@@ -203,7 +203,7 @@ class Router:
         try:
             known = self._catalog.is_known(model_id)
         except Exception as exc:  # noqa: BLE001 - a catalog probe never blocks a turn
-            logger.debug("jev-router: catalog check failed (%s: %s)", type(exc).__name__, exc)
+            logger.debug("jev-effort-router: catalog check failed (%s: %s)", type(exc).__name__, exc)
             return True
         return known is not False
 
@@ -241,13 +241,13 @@ class Router:
                 provider=where.provider,
             )
         except Exception as exc:  # noqa: BLE001 - belt and braces around the client
-            logger.warning("jev-router: decision call failed (%s); leaving request untouched", exc)
+            logger.warning("jev-effort-router: decision call failed (%s); leaving request untouched", exc)
             self._record_skip(settings, REASON_EXCEPTION, where)
             return None
 
         if decision is None:
             if reason == REASON_NO_API_KEY:
-                logger.info("jev-router: OPENROUTER_API_KEY is not set; turns keep the configured model")
+                logger.info("jev-effort-router: OPENROUTER_API_KEY is not set; turns keep the configured model")
             self._record_skip(settings, reason or REASON_EXCEPTION, where)
             return None
         return decision
@@ -308,14 +308,14 @@ class Router:
         self.audit(settings).append(record)
         if decision.degraded:
             logger.info(
-                "jev-router: routed %s (effort %s) with degradation %s",
+                "jev-effort-router: routed %s (effort %s) with degradation %s",
                 decision.model,
                 decision.effort,
                 ",".join(decision.fallback_reasons),
             )
         else:
             logger.debug(
-                "jev-router: routed %s (effort %s) in %d ms",
+                "jev-effort-router: routed %s (effort %s) in %d ms",
                 decision.model,
                 decision.effort,
                 decision.latency_ms,

@@ -105,7 +105,7 @@ class ModelCatalog:
             try:
                 models = _model_ids(json.loads(path.read_text(encoding="utf-8"))) or None
             except Exception as exc:  # noqa: BLE001 - a missing/garbled cache is not a failure
-                logger.debug("jev-router: provider catalog unavailable (%s: %s)", type(exc).__name__, exc)
+                logger.debug("jev-effort-router: provider catalog unavailable (%s: %s)", type(exc).__name__, exc)
                 models = None
         self._models = models
         self._read_at = self._clock()

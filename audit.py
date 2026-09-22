@@ -50,7 +50,7 @@ class AuditLog:
         try:
             payload = json.dumps(entry, ensure_ascii=False, default=str)
         except Exception:  # noqa: BLE001 - an unserialisable record is dropped, not fatal
-            logger.debug("jev-router: dropping unserialisable audit record")
+            logger.debug("jev-effort-router: dropping unserialisable audit record")
             return False
         try:
             with _LOCK:
@@ -60,7 +60,7 @@ class AuditLog:
                     handle.write(payload + "\n")
             return True
         except Exception as exc:  # noqa: BLE001 - auditing must never break a turn
-            logger.debug("jev-router: audit write failed: %s", exc)
+            logger.debug("jev-effort-router: audit write failed: %s", exc)
             return False
 
     def _rotate_if_needed(self) -> None:
@@ -81,7 +81,7 @@ class AuditLog:
             temp.write_text("\n".join(keep) + "\n" if keep else "", encoding="utf-8")
             os.replace(temp, path)
         except Exception:  # noqa: BLE001
-            logger.debug("jev-router: audit rotation skipped")
+            logger.debug("jev-effort-router: audit rotation skipped")
 
     def tail(self, limit: int = 10) -> List[Dict[str, Any]]:
         """The most recent ``limit`` records, newest last. Never raises."""

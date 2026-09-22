@@ -1,7 +1,18 @@
-# jev-router
+# jev-effort-router
 
-Per-turn model and reasoning-effort routing for [Hermes Agent](https://github.com/NousResearch/hermes-agent),
-decided by [TypeSafe Jev](https://openrouter.ai/typesafe/jev-1.13) — a "System One" decision model, not an LLM.
+**Per-turn model *and* reasoning-effort routing for [Hermes Agent](https://github.com/NousResearch/hermes-agent)** —
+both halves decided by [TypeSafe Jev](https://openrouter.ai/typesafe/jev-1.13), a "System One" decision
+model, not an LLM.
+
+Hermes lets you set a reasoning effort. It does not let you set a *different* one on the next turn — the
+level is a session setting, so a two-line question and a gnarly refactor both pay whichever effort you
+last chose. This plugin makes it per-turn: Jev reads the task, picks the model and the effort for that
+turn, and the request goes out rewritten.
+
+**That combination is the whole point, and it is why this plugin exists separately from the others.**
+Every other routing entry in the catalog picks a **model** and stops there. The only entries that touch
+reasoning effort make you move it **by hand** from the status bar. Nothing else decides both
+automatically, per turn.
 
 **Scope: this plugin is for Hermes running on Ollama:Cloud.** Its whole routing grid is six Ollama:Cloud
 models, the per-family effort table is written for Ollama:Cloud's reasoning-effort vocabulary, and the
@@ -9,9 +20,9 @@ middleware routes **only** the `ollama-cloud` provider — every other provider 
 installing it on another provider changes nothing. You need Hermes on `provider: ollama-cloud`, with that
 provider's catalog reachable, for this plugin to have any effect.
 
-Hermes normally runs one model at one reasoning-effort for a whole session. `jev-router` asks Jev — on every
-user turn, in ~270 ms and at $0.042/M input tokens — which of six benchmarked Ollama:cloud models and which
-effort level fit the task, then rewrites the outgoing provider request accordingly.
+Hermes normally runs one model at one reasoning-effort for a whole session. `jev-effort-router` asks Jev —
+on every user turn, in ~270 ms and at $0.042/M input tokens — which of six benchmarked Ollama:cloud models
+and which effort level fit the task, then rewrites the outgoing provider request accordingly.
 
 Jev writes nothing. The selected model still does all the reasoning and all the generation; Jev only steers.
 
@@ -33,8 +44,8 @@ main model reasons and answers
 ## Install
 
 ```bash
-hermes plugins install AlphaPerseii3000/jev-router
-hermes plugins enable jev-router
+hermes plugins install AlphaPerseii3000/jev-effort-router
+hermes plugins enable jev-effort-router
 ```
 
 Hermes scans a community plugin on install and **blocks this one by default** — verified on 0.21.4, not
@@ -61,7 +72,7 @@ distinguish a docstring describing a network call from a hostile one, so the ver
 Review the findings above and re-run with `--force` to accept them:
 
 ```bash
-hermes plugins install AlphaPerseii3000/jev-router --force
+hermes plugins install AlphaPerseii3000/jev-effort-router --force
 ```
 
 To skip the scan entirely for this repository, set `plugins.scan_on_install` in your Hermes config.
@@ -84,28 +95,28 @@ with the `llm_request` middleware kind (0.21.4 or newer), Python 3.11+, and prep
 In a session:
 
 ```
-/jev-router status
-/jev-router route refactor the payment module
+/jev-effort-router status
+/jev-effort-router route refactor the payment module
 ```
 
 From the shell:
 
 ```bash
-hermes jev-router status
-hermes jev-router route "summarise this changelog"
-hermes jev-router grid
-hermes jev-router tail 20      # last audit records as JSON
-hermes jev-router reset        # drop memoised decisions
+hermes jev-effort-router status
+hermes jev-effort-router route "summarise this changelog"
+hermes jev-effort-router grid
+hermes jev-effort-router tail 20      # last audit records as JSON
+hermes jev-effort-router reset        # drop memoised decisions
 ```
 
 `status` reports whether routing is enabled, whether the key is present, the grid, and the most recent
 decisions. `route` exercises Jev end-to-end without running a turn, and exits non-zero when routing fails.
 
-Two agent-facing tools are registered as well: `jev_router_status` and `jev_router_route`.
+Two agent-facing tools are registered as well: `jev_effort_router_status` and `jev_effort_router_route`.
 
 ## Configuration
 
-All settings live under `plugins.entries.jev-router.settings` and are editable from the Desktop settings
+All settings live under `plugins.entries.jev-effort-router.settings` and are editable from the Desktop settings
 form generated from `plugin.yaml`.
 
 | Setting | Default | Meaning |
@@ -179,7 +190,7 @@ lands on `high`.
 
 ## Audit trail
 
-One JSONL record per routing attempt, under `<HERMES_HOME>/plugin-data/jev-router/routes.jsonl`:
+One JSONL record per routing attempt, under `<HERMES_HOME>/plugin-data/jev-effort-router/routes.jsonl`:
 
 ```json
 {

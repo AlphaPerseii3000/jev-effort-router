@@ -1,4 +1,4 @@
-"""jev-router — route each Hermes turn through TypeSafe Jev's decision endpoint.
+"""jev-effort-router — route each Hermes turn through TypeSafe Jev's decision endpoint.
 
 What it does: on the first provider request of every user turn, ask Jev (`typesafe/jev-1.13`
 over OpenRouter's Decisions API) which Ollama:cloud model and which reasoning-effort level fit
@@ -34,7 +34,7 @@ __all__ = ["register", "register_cli"]
 
 logger = logging.getLogger(__name__)
 
-PLUGIN_ID = "jev-router"
+PLUGIN_ID = "jev-effort-router"
 
 
 def _warn_missing_key_once() -> None:
@@ -42,7 +42,7 @@ def _warn_missing_key_once() -> None:
     if api_key():
         return
     logger.info(
-        "jev-router: OPENROUTER_API_KEY is not set — the router is inert until a key is "
+        "jev-effort-router: OPENROUTER_API_KEY is not set — the router is inert until a key is "
         "available (Jev is reached through OpenRouter)."
     )
 
@@ -71,7 +71,7 @@ def register(ctx: Any) -> None:
     for schema, handler in build_tool_registrations(router, get_settings):
         ctx.register_tool(
             name=schema["name"],
-            toolset="jev-router",
+            toolset="jev-effort-router",
             schema=schema,
             handler=handler,
         )
@@ -82,7 +82,7 @@ def register(ctx: Any) -> None:
     register_commands(ctx, router, get_settings)
 
     _warn_missing_key_once()
-    logger.debug("jev-router: registered llm_request middleware, tools, hooks and commands")
+    logger.debug("jev-effort-router: registered llm_request middleware, tools, hooks and commands")
 
 
 def _make_observer(router: Router, hook_name: str):
@@ -94,15 +94,15 @@ def _make_observer(router: Router, hook_name: str):
                 # A finished session must not leave a stale decision replayable.
                 router.forget()
         except Exception:  # noqa: BLE001 - observers never affect a turn
-            logger.debug("jev-router: %s observer failed", hook_name)
+            logger.debug("jev-effort-router: %s observer failed", hook_name)
 
-    observer.__name__ = f"jev_router_{hook_name}"
+    observer.__name__ = f"jev_effort_router_{hook_name}"
     return observer
 
 
 def register_cli(subparser: Any) -> None:
     """Reserved for the future pip-distributed form; the directory plugin registers
-    ``hermes jev-router`` through :func:`register` via ``ctx.register_cli_command``."""
+    ``hermes jev-effort-router`` through :func:`register` via ``ctx.register_cli_command``."""
     from .commands import setup_argparse
 
     setup_argparse(subparser)

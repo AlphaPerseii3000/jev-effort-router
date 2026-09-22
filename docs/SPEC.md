@@ -1,5 +1,5 @@
 ---
-id: SPEC-jev-router
+id: SPEC-jev-effort-router
 companions:
   - routing-grid.md
   - jev-decisions-api.md
@@ -26,7 +26,7 @@ reasoning and generation in the main model — it only steers.
 
 - **CAP-1** — An operator can install and enable the plugin in one command, and a fresh Hermes session
   routes every turn without any further configuration beyond an OpenRouter API key.
-  - **success:** `hermes plugins enable jev-router` followed by `hermes plugins list` shows the plugin
+  - **success:** `hermes plugins enable jev-effort-router` followed by `hermes plugins list` shows the plugin
     enabled with its declared middleware/hook/tool surface; `hermes plugins doctor <repo>` exits 0.
 
 - **CAP-2** — On the first LLM request of each user turn, the effective provider kwargs are rewritten so
@@ -57,8 +57,8 @@ reasoning and generation in the main model — it only steers.
 
 - **CAP-6** — An operator can see the routing state and the recent decisions from inside a Hermes session
   and from the shell, and can exercise the router end-to-end without running a full turn.
-  - **success:** `/jev-router status` and `hermes jev-router status` both report enabled state, model,
-  endpoint host, threshold, and the N most recent routes; `hermes jev-router route "refactor the payment
+  - **success:** `/jev-effort-router status` and `hermes jev-effort-router status` both report enabled state, model,
+  endpoint host, threshold, and the N most recent routes; `hermes jev-effort-router route "refactor the payment
   module"` prints Jev's model/effort answer plus latency and exits non-zero on a routing failure.
 
 - **CAP-7** — Routing degrades to "do nothing" on every surface or configuration it does not own, instead

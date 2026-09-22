@@ -86,7 +86,7 @@ which it does for the recent-context window (a bounded tail, never the whole tra
 
 ## Plugin packaging surface
 
-- Directory plugin (`HERMES_HOME/plugins/jev-router/`) with `plugin.yaml`, `__init__.py`,
+- Directory plugin (`HERMES_HOME/plugins/jev-effort-router/`) with `plugin.yaml`, `__init__.py`,
   optional `pyproject.toml` for `httpx`.
 - Manifest `provides_hooks: [...]`, `provides_tools: [...]`, `config_schema` for the tunables
   (endpoint is fixed; settings are threshold, Jev model id, timeout, enable/disable switches, grid
@@ -102,7 +102,7 @@ which it does for the recent-context window (a bounded tail, never the whole tra
 - `ctx.register_hook(name, callback)` → observer hooks (`post_llm_call` for turn outcome correlation)
 - `ctx.register_tool(name, toolset, schema, handler)` → tools
 - `ctx.register_command(name, handler, description, args_hint)` → slash commands
-- `ctx.register_cli_command(name, help, setup_fn, handler_fn)` → `hermes jev-router …`
+- `ctx.register_cli_command(name, help, setup_fn, handler_fn)` → `hermes jev-effort-router …`
 - `ctx.get_config(key, default)` / `ctx.set_config(key, value)` → `plugins.entries.<id>.settings.<key>`
 - `ctx.state` → profile-scoped durable JSON under `<HERMES_HOME>/plugin-data/<id>/`, atomic, 10 MiB quota
 - `ctx.emit(event, payload)` / `ctx.subscribe(event, callback)` → plugin-to-plugin events

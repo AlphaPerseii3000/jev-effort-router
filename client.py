@@ -128,7 +128,7 @@ class JevClient:
             "Authorization": f"Bearer {api_key()}",
             "Content-Type": "application/json",
             # Ranking headers are optional; they make the traffic identifiable on OpenRouter.
-            "X-Title": "hermes-jev-router",
+            "X-Title": "hermes-jev-effort-router",
         }
         if self._transport is not None:
             response = self._transport.post(
@@ -195,22 +195,22 @@ class JevClient:
             name = type(exc).__name__
             timeout_types = ("Timeout", "ReadTimeout", "ConnectTimeout", "PoolTimeout", "TimeoutException")
             if any(token in name for token in timeout_types):
-                logger.warning("jev-router: Jev timed out after %d ms (%s)", latency_ms, name)
+                logger.warning("jev-effort-router: Jev timed out after %d ms (%s)", latency_ms, name)
                 return None, REASON_TIMEOUT
-            logger.warning("jev-router: Jev call failed: %s: %s", name, redact(exc, 300))
+            logger.warning("jev-effort-router: Jev call failed: %s: %s", name, redact(exc, 300))
             return None, REASON_UPSTREAM_ERROR
         latency_ms = int((time.monotonic() - started) * 1000)
 
         status = getattr(response, "status_code", None)
         if status is None or not (200 <= int(status) < 300):
             body = redact(getattr(response, "text", ""), 300)
-            logger.warning("jev-router: Jev returned HTTP %s: %s", status, body)
+            logger.warning("jev-effort-router: Jev returned HTTP %s: %s", status, body)
             return None, REASON_UPSTREAM_ERROR
 
         try:
             data = response.json()
         except Exception:  # noqa: BLE001 - a non-JSON body is just another failure
-            logger.warning("jev-router: Jev returned a non-JSON body: %s", redact(getattr(response, "text", ""), 300))
+            logger.warning("jev-effort-router: Jev returned a non-JSON body: %s", redact(getattr(response, "text", ""), 300))
             return None, REASON_MALFORMED
 
         return self._interpret(data, grid, latency_ms=latency_ms)

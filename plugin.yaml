@@ -1,11 +1,11 @@
-name: jev-router
-version: 0.1.1
+name: jev-effort-router
+version: 0.2.0
 manifest_version: 2
 api_version: 1
 description: Route each user turn to the best Ollama:Cloud model and reasoning effort via TypeSafe Jev's decision endpoint. Ollama:Cloud only — no other provider is routed.
 author: AlphaPerseii3000
 license: MIT
-homepage: https://github.com/AlphaPerseii3000/jev-router
+homepage: https://github.com/AlphaPerseii3000/jev-effort-router
 tags: [routing, models, reasoning, ollama-cloud, decisions]
 # ``provides_middleware`` is not in the host's ``_KNOWN_MANIFEST_FIELDS``, so declaring it emits an
 # "unknown manifest field(s) ignored" warning on every load. It is declared anyway, deliberately:
@@ -22,8 +22,8 @@ provides_hooks:
   - on_session_end
   - post_llm_call
 provides_tools:
-  - jev_router_status
-  - jev_router_route
+  - jev_effort_router_status
+  - jev_effort_router_route
 requires_env:
   - name: OPENROUTER_API_KEY
     description: OpenRouter API key - Jev is reached through OpenRouter's Decisions API.

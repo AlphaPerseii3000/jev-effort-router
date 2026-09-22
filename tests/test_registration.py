@@ -26,7 +26,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-MODULE_NAME = "hermes_plugins_jev_router_registration_test"
+MODULE_NAME = "hermes_plugins_jev_effort_router_registration_test"
 
 
 def _load_plugin():
@@ -59,11 +59,11 @@ def test_register_wires_the_declared_surface(plugin, tmp_path, monkeypatch):
     plugin.register(ctx)
 
     assert "llm_request" in ctx.middleware
-    assert set(ctx.tools) == {"jev_router_status", "jev_router_route"}
-    assert all(entry["toolset"] == "jev-router" for entry in ctx.tools.values())
+    assert set(ctx.tools) == {"jev_effort_router_status", "jev_effort_router_route"}
+    assert all(entry["toolset"] == "jev-effort-router" for entry in ctx.tools.values())
     assert set(ctx.hooks) == {"on_session_end", "post_llm_call"}
-    assert "jev-router" in ctx.cli_commands
-    assert "jev-router" in ctx.slash_commands
+    assert "jev-effort-router" in ctx.cli_commands
+    assert "jev-effort-router" in ctx.slash_commands
 
 
 def test_manifest_declares_exactly_what_is_registered(plugin, tmp_path, monkeypatch):
@@ -144,7 +144,7 @@ def test_status_tool_reports_the_grid_and_the_audit(plugin, tmp_path, monkeypatc
     ctx = StubContext(config={}, state=StubState(tmp_path))
     plugin.register(ctx)
 
-    payload = json.loads(ctx.tools["jev_router_status"]["handler"]({"recent": 3}))
+    payload = json.loads(ctx.tools["jev_effort_router_status"]["handler"]({"recent": 3}))
 
     assert payload["enabled"] is True
     assert payload["api_key_present"] is True
@@ -203,7 +203,7 @@ def test_status_tool_accepts_the_arguments_dict_the_host_passes(plugin, tmp_path
     ctx = StubContext(config={}, state=StubState(tmp_path))
     plugin.register(ctx)
 
-    payload = json.loads(_dispatch_like_the_host(ctx.tools["jev_router_status"]["handler"], args))
+    payload = json.loads(_dispatch_like_the_host(ctx.tools["jev_effort_router_status"]["handler"], args))
 
     assert payload["enabled"] is True
     assert len(payload["grid"]) == 6
@@ -229,7 +229,7 @@ def test_route_tool_accepts_the_arguments_dict_the_host_passes(plugin, tmp_path,
     router = ctx.middleware["llm_request"].__self__
     router.client = lambda settings: JevClient(settings, transport=transport)
 
-    payload = json.loads(_dispatch_like_the_host(ctx.tools["jev_router_route"]["handler"], args))
+    payload = json.loads(_dispatch_like_the_host(ctx.tools["jev_effort_router_route"]["handler"], args))
 
     assert payload["routed"] is True
     assert payload["model"] == "kimi-k3"
@@ -243,7 +243,7 @@ def test_route_tool_without_a_task_is_a_clean_error(plugin, tmp_path, monkeypatc
     ctx = StubContext(config={}, state=StubState(tmp_path))
     plugin.register(ctx)
 
-    payload = json.loads(_dispatch_like_the_host(ctx.tools["jev_router_route"]["handler"], {}))
+    payload = json.loads(_dispatch_like_the_host(ctx.tools["jev_effort_router_route"]["handler"], {}))
 
     assert payload == {"error": "task must not be empty"}
 
@@ -253,9 +253,9 @@ def test_slash_command_status_grid_and_usage(plugin, tmp_path, monkeypatch):
     ctx = StubContext(config={}, state=StubState(tmp_path))
     plugin.register(ctx)
 
-    handler = ctx.slash_commands["jev-router"]["handler"]
+    handler = ctx.slash_commands["jev-effort-router"]["handler"]
 
-    assert "jev-router" in handler("")
+    assert "jev-effort-router" in handler("")
     assert "Grid" in handler("grid")
     assert "Usage" in handler("nonsense")
 
@@ -265,12 +265,12 @@ def test_cli_command_status_and_missing_task(plugin, tmp_path, monkeypatch, caps
     ctx = StubContext(config={}, state=StubState(tmp_path))
     plugin.register(ctx)
 
-    handler = ctx.cli_commands["jev-router"]["handler_fn"]
+    handler = ctx.cli_commands["jev-effort-router"]["handler_fn"]
 
-    assert handler(Args(jev_router_command="status")) == 0
-    assert "jev-router" in capsys.readouterr().out
+    assert handler(Args(jev_effort_router_command="status")) == 0
+    assert "jev-effort-router" in capsys.readouterr().out
 
-    assert handler(Args(jev_router_command="route", task=[])) == 2
+    assert handler(Args(jev_effort_router_command="route", task=[])) == 2
 
 
 def test_cli_reset_drops_the_memo(plugin, tmp_path, monkeypatch, capsys):
@@ -278,7 +278,7 @@ def test_cli_reset_drops_the_memo(plugin, tmp_path, monkeypatch, capsys):
     ctx = StubContext(config={}, state=StubState(tmp_path))
     plugin.register(ctx)
 
-    assert ctx.cli_commands["jev-router"]["handler_fn"](Args(jev_router_command="reset")) == 0
+    assert ctx.cli_commands["jev-effort-router"]["handler_fn"](Args(jev_effort_router_command="reset")) == 0
     assert "dropped" in capsys.readouterr().out
 
 
@@ -287,8 +287,8 @@ def test_cli_tail_prints_json_records(plugin, tmp_path, monkeypatch, capsys):
     ctx = StubContext(config={}, state=StubState(tmp_path))
     plugin.register(ctx)
 
-    handler = ctx.cli_commands["jev-router"]["handler_fn"]
-    assert handler(Args(jev_router_command="tail", count=5)) == 0
+    handler = ctx.cli_commands["jev-effort-router"]["handler_fn"]
+    assert handler(Args(jev_effort_router_command="tail", count=5)) == 0
     assert capsys.readouterr().out.strip() == ""
 
 
