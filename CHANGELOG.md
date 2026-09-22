@@ -4,6 +4,22 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `jev_router_status` and `jev_router_route` now accept the arguments dict the host's tool registry
+  passes positionally (`handler(args, **context)`). Both were declared `handler(recent=5)` /
+  `handler(task="", context="")`, so the arguments dict was bound to the first parameter and every
+  call that carried a parameter failed with
+  `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'dict'`.
+  Reproduced through `tools/registry.py::dispatch`: the empty-arguments call worked, which is how it
+  hid. Covered by tests that dispatch through a host-shaped call.
+- `plugin.yaml` no longer declares `provides_middleware:` — the manifest schema has no such field, so
+  it only produced an `unknown manifest field(s) ignored` warning on every load. The middleware is
+  wired in code (`ctx.register_middleware("llm_request", ...)`); a regression test now asserts every
+  manifest key is one the installed Hermes understands.
+
 ## [0.1.0] - 2026-09-22
 
 First release.
