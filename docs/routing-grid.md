@@ -8,6 +8,11 @@ how a chosen level lands on each model family's wire.
 The Choice options are exactly these six, in this order. The option string is
 `"<model-id>: <one-line profile>"`; the model id is everything before the first `:`.
 
+Every model id here belongs to the **Ollama:Cloud** provider — this plugin routes nothing else. The
+profile text is sent to Jev verbatim and is part of the measured payload (the grid was benchmarked in
+French), so treat it as data rather than documentation: it is not a display string, and rewriting or
+translating it changes what Jev is choosing between.
+
 | # | Model id (option prefix) | Profile line sent to Jev | Context | Benchmark evidence |
 |---|---|---|---|---|
 | 1 | `deepseek-v4.1-flash` | généraliste, excellent rapport qualité/prix, contexte 1M, à privilégier par défaut | 1M | Terminal-Bench near paid flagships; young model (Sep 2026), watch in production |
@@ -21,7 +26,8 @@ The Choice options are exactly these six, in this order. The option string is
 `nemotron-3-nano` while the provider's catalog names it `nemotron-3-nano:30b`; the bare name
 returned `HTTP 404: model "nemotron-3-nano" not found` and killed the turn outright. Verify every
 grid entry against the provider's model list (the host caches it at
-`<HERMES_HOME>/ollama_cloud_models_cache.json`) rather than against memory or pricing pages.
+`<HERMES_HOME>/ollama_cloud_models_cache.json`) rather than against memory or pricing pages — a
+provider-side rename is the one drift a passing offline suite cannot see.
 
 Pricing (reference only — the plugin does not use it for decisions): deepseek-v4.1-flash $0.15/$0.60
 off-peak first-party ($0.12/$0.48 on OpenRouter, doubled during UTC 01–04h and 06–10h on weekdays);

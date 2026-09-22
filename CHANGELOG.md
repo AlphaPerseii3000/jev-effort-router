@@ -19,6 +19,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   it only produced an `unknown manifest field(s) ignored` warning on every load. The middleware is
   wired in code (`ctx.register_middleware("llm_request", ...)`); a regression test now asserts every
   manifest key is one the installed Hermes understands.
+- Documentation states the plugin's scope explicitly: it is for Hermes running on **Ollama:Cloud**, and
+  no other provider is routed (README, manifest description, SPEC non-goals). The README's grid table
+  now gives the profiles as they are actually sent to Jev, plus an English gloss beside each.
 - The grid entry `nemotron-3-nano` is now `nemotron-3-nano:30b`, the id the provider's own catalog
   uses. The bare name produced `HTTP 404: model "nemotron-3-nano" not found` and failed the whole
   turn — the one outcome the fail-open design exists to prevent.

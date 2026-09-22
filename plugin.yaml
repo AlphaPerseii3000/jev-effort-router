@@ -2,7 +2,7 @@ name: jev-router
 version: 0.1.0
 manifest_version: 2
 api_version: 1
-description: Route each user turn to the best Ollama:cloud model and reasoning effort via TypeSafe Jev's decision endpoint.
+description: Route each user turn to the best Ollama:Cloud model and reasoning effort via TypeSafe Jev's decision endpoint. Ollama:Cloud only — no other provider is routed.
 author: AlphaPerseii3000
 license: MIT
 homepage: https://github.com/AlphaPerseii3000/jev-router

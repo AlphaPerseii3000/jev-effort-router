@@ -3,6 +3,12 @@
 Per-turn model and reasoning-effort routing for [Hermes Agent](https://github.com/NousResearch/hermes-agent),
 decided by [TypeSafe Jev](https://openrouter.ai/typesafe/jev-1.13) — a "System One" decision model, not an LLM.
 
+**Scope: this plugin is for Hermes running on Ollama:Cloud.** Its whole routing grid is six Ollama:Cloud
+models, the per-family effort table is written for Ollama:Cloud's reasoning-effort vocabulary, and the
+middleware routes **only** the `ollama-cloud` provider — every other provider passes through untouched, so
+installing it on another provider changes nothing. You need Hermes on `provider: ollama-cloud`, with that
+provider's catalog reachable, for this plugin to have any effect.
+
 Hermes normally runs one model at one reasoning-effort for a whole session. `jev-router` asks Jev — on every
 user turn, in ~270 ms and at $0.042/M input tokens — which of six benchmarked Ollama:cloud models and which
 effort level fit the task, then rewrites the outgoing provider request accordingly.
@@ -52,8 +58,8 @@ OPENROUTER_API_KEY=sk-or-...
 
 Restart the session. That is the whole setup: the six-model grid ships as the default.
 
-Requirements: Hermes Agent with the `llm_request` middleware kind (0.21.4 or newer), Python 3.11+,
-and prepaid OpenRouter credits.
+Requirements: **Hermes Agent on Ollama:Cloud** (`provider: ollama-cloud` — no other provider is routed),
+with the `llm_request` middleware kind (0.21.4 or newer), Python 3.11+, and prepaid OpenRouter credits.
 
 ## Verify it is working
 
@@ -121,20 +127,30 @@ different models without anyone reconfiguring anything.
 
 ## The routing grid
 
-Six models, in this order. The list is deliberately short: every extra option measurably dilutes a Choice
-decision.
+Six Ollama:Cloud models, in this order. The list is deliberately short: every extra option measurably
+dilutes a Choice decision.
 
-| # | Model | Profile |
-|---|---|---|
-| 1 | `deepseek-v4.1-flash` | généraliste, excellent rapport qualité/prix, contexte 1M, à privilégier par défaut |
-| 2 | `kimi-k3` | code et tâches agentiques haut de gamme, coûteux, à réserver au développement complexe |
-| 3 | `glm-5.3` | raisonnement scientifique et logique poussé, coûteux, forte exigence analytique |
-| 4 | `glm-5.3-flash` | rapide et économique, excellent en usage réel pour les tâches courantes |
-| 5 | `minimax-m3` | bon compromis vitesse/agentique pour le tool calling et les actions séquentielles |
-| 6 | `nemotron-3-nano:30b` | très haut débit, tâches simples uniquement, à éviter pour du raisonnement |
+The **Profile** column is shown in the language the criteria are actually sent to Jev in — the profiles
+live in [`grid.py`](grid.py) as French one-liners, because the decision model was benchmarked with them in
+French, and the text is part of the measured payload rather than a display string. Rewriting or translating
+them changes what Jev is choosing between, so treat them as data: to use your own wording, override `grid`.
+
+| # | Model | Profile (as sent to Jev) | Meaning |
+|---|---|---|---|
+| 1 | `deepseek-v4.1-flash` | généraliste, excellent rapport qualité/prix, contexte 1M, à privilégier par défaut | generalist, best value, 1M context — the default choice |
+| 2 | `kimi-k3` | code et tâches agentiques haut de gamme, coûteux, à réserver au développement complexe | top-tier code and agentic work, expensive — reserve for complex development |
+| 3 | `glm-5.3` | raisonnement scientifique et logique poussé, coûteux, forte exigence analytique | deep scientific and logical reasoning, expensive — high analytical demands |
+| 4 | `glm-5.3-flash` | rapide et économique, excellent en usage réel pour les tâches courantes | fast and cheap, strong on everyday tasks |
+| 5 | `minimax-m3` | bon compromis vitesse/agentique pour le tool calling et les actions séquentielles | speed/agentic trade-off for tool calling and sequential actions |
+| 6 | `nemotron-3-nano:30b` | très haut débit, tâches simples uniquement, à éviter pour du raisonnement | very high throughput, simple tasks only — avoid for reasoning |
 
 Adding a model is a reviewed change to [`docs/routing-grid.md`](docs/routing-grid.md) with benchmark
 evidence behind it — not a config-only act. See that file for the benchmark sources and pricing.
+
+Model ids are checked against Ollama:Cloud's own catalog before they go on the wire: `status` reports any
+grid entry the provider no longer serves under `grid_unavailable`, and a decision naming one is refused
+rather than sent. A provider catalog naming a model the grid does not offer is not added automatically —
+extending the grid stays a reviewed change.
 
 ### Reasoning effort per model family
 
@@ -195,8 +211,10 @@ tests/test_grid.py          the grid and choice→model mapping
 tests/test_effort.py        per-family effort translation
 tests/test_client.py        wire contract, answer interpretation, failure containment
 tests/test_router.py        routing end-to-end, replay, degradation, skip gates
+tests/test_catalog.py       provider-catalog check: a model the provider lacks is refused
+tests/test_catalog_status.py the grid_unavailable warning on the status surface
 tests/test_audit.py         audit trail and the per-turn memo
-tests/test_registration.py  register(ctx) surface, manifest drift, no socket I/O
+tests/test_registration.py  register(ctx) surface, manifest drift, tool dispatch shape, no socket I/O
 ```
 
 `tests/test_registration.py` is the one that matters most for packaging: it loads `__init__.py` the way
