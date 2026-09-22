@@ -90,9 +90,12 @@ which it does for the recent-context window (a bounded tail, never the whole tra
   optional `pyproject.toml` for `httpx`.
 - Manifest `provides_hooks: [...]`, `provides_tools: [...]`, `config_schema` for the tunables
   (endpoint is fixed; settings are threshold, Jev model id, timeout, enable/disable switches, grid
-  override, context turns, audit on/off). The manifest declares **no** `provides_middleware`: that
-  key is not part of the manifest schema and the host warns about it on every load, so the
-  middleware lives in code only (`ctx.register_middleware("llm_request", ...)`).
+  override, context turns, audit on/off). The manifest **does** declare `provides_middleware:
+  [llm_request]`, knowingly outside the host's manifest schema: `hermes plugins validate` fails a
+  plugin whose registered middleware is undeclared, and that check is the plugin-catalog admission
+  gate, so an undeclared middleware costs the catalog entry. The price is one `unknown manifest
+  field(s) ignored` warning per load — accepted. The middleware is wired in code either way
+  (`ctx.register_middleware("llm_request", ...)`).
   `llm_execution` is deliberately not declared: it wraps the real call with a single-use `next_call`
   and nothing in this plugin needs to observe or retry the call itself.
 - `ctx.register_middleware(kind, callback)` → `PluginRegistration`

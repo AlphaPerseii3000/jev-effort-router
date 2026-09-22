@@ -74,18 +74,27 @@ def test_manifest_declares_exactly_what_is_registered(plugin, tmp_path, monkeypa
 
     plugin.register(ctx)
 
-    # Middleware has no manifest field in the host's schema (declaring one only produces an
-    # "unknown manifest field(s) ignored" warning per load), so it is asserted on code alone.
+    # Middleware IS declared, deliberately, even though the host's manifest schema has no such field
+    # (declaring it produces one "unknown manifest field(s) ignored" warning per load). The reason is
+    # the admission gate: `hermes plugins validate` fails an entry whose registered middleware is not
+    # in `provides_middleware`, so leaving it undeclared means no catalog entry. See `test_manifest_
+    # fields_are_known_to_the_host` below for the counterweight it used to enforce.
     assert sorted(manifest["provides_tools"]) == sorted(ctx.tools)
     assert sorted(manifest["provides_hooks"]) == sorted(ctx.hooks)
+    assert sorted(manifest["provides_middleware"]) == sorted(ctx.middleware)
 
 
 def test_manifest_fields_are_known_to_the_host():
-    """Every key in plugin.yaml must be one the installed Hermes understands.
+    """Every key in plugin.yaml must be one the installed Hermes understands — with one exception.
 
-    An unknown key is not fatal — the host warns and loads anyway — which is exactly why it went
-    unnoticed: the declaration looked like documentation while doing nothing. Skips when the suite
-    runs outside a Hermes install.
+    An unknown key is not fatal — the host warns and loads anyway.
+
+    ``provides_middleware`` is knowingly outside the host's ``_KNOWN_MANIFEST_FIELDS`` and is
+    tolerated here because the catalog admission gate requires it: ``hermes plugins validate``
+    diffs the manifest against what ``register(ctx)`` wires and FAILS a plugin that registers
+    middleware without declaring it. Declaring it therefore buys admission at the price of one
+    load-time warning; not declaring it costs the catalog entry. When upstream adds the key to
+    the schema, this exception becomes dead and the test tightens back to an empty set.
     """
     yaml = pytest.importorskip("yaml")
     manifest_module = pytest.importorskip("hermes_cli.plugins_manifest")
@@ -93,7 +102,7 @@ def test_manifest_fields_are_known_to_the_host():
     manifest = yaml.safe_load((ROOT / "plugin.yaml").read_text(encoding="utf-8"))
     unknown = sorted(set(manifest) - set(manifest_module._KNOWN_MANIFEST_FIELDS))
 
-    assert unknown == []
+    assert unknown == ["provides_middleware"]
 
 
 def test_register_does_no_network_io(plugin, tmp_path, monkeypatch):

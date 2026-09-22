@@ -6,6 +6,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-09-23
+
 ### Changed
 
 - **The grid profiles are now English, which is a change of payload and therefore of behaviour.**
@@ -42,10 +44,20 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `TypeError: int() argument must be a string, a bytes-like object or a real number, not 'dict'`.
   Reproduced through `tools/registry.py::dispatch`: the empty-arguments call worked, which is how it
   hid. Covered by tests that dispatch through a host-shaped call.
-- `plugin.yaml` no longer declares `provides_middleware:` — the manifest schema has no such field, so
-  it only produced an `unknown manifest field(s) ignored` warning on every load. The middleware is
-  wired in code (`ctx.register_middleware("llm_request", ...)`); a regression test now asserts every
-  manifest key is one the installed Hermes understands.
+- **`provides_middleware:` is declared again — a deliberate reversal of the previous entry.** It had
+  been removed because the manifest schema has no such field and the host warned about it on every
+  load. That trade was wrong: `hermes plugins validate` diffs the manifest against what
+  `register(ctx)` wires and fails the plugin with `undeclared middleware registered (not in
+  provides_middleware): llm_request`. That check *is* the plugin-catalog admission gate
+  (`plugin-catalog-ci.yml` runs `hermes plugins validate --install-deps` at the pinned sha), so
+  omitting the key silently disqualified the plugin from the catalog while looking like harmless
+  cleanup — the warning it "fixed" was cosmetic and the failure it caused was not. Reproduced and
+  confirmed on Hermes 0.21.4; with the key restored, `hermes plugins validate` reports
+  `declared middleware :: matches registrations` and the overall verdict is `ok: true`. The one
+  load-time warning is accepted as the price of admission. `test_manifest_fields_are_known_to_the_host`
+  now asserts exactly `["provides_middleware"]` as the single tolerated unknown key instead of
+  demanding an empty set, and the README/manifest comments and `docs/integration-surface.md` state
+  the trade-off rather than denying the field exists.
 - Documentation states the plugin's scope explicitly: it is for Hermes running on **Ollama:Cloud**, and
   no other provider is routed (README, manifest description, SPEC non-goals). The README's grid table
   now gives the profiles as they are actually sent to Jev, plus an English gloss beside each.
@@ -84,4 +96,5 @@ First release.
   `grid`, `tail`, `reset`), and the `jev_router_status` / `jev_router_route` agent tools.
 - 74 tests, driving the real middleware callback against a stub Decisions API with no network access.
 
+[0.1.1]: https://github.com/AlphaPerseii3000/jev-router/releases/tag/v0.1.1
 [0.1.0]: https://github.com/AlphaPerseii3000/jev-router/releases/tag/v0.1.0

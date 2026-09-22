@@ -1,5 +1,5 @@
 name: jev-router
-version: 0.1.0
+version: 0.1.1
 manifest_version: 2
 api_version: 1
 description: Route each user turn to the best Ollama:Cloud model and reasoning effort via TypeSafe Jev's decision endpoint. Ollama:Cloud only — no other provider is routed.
@@ -7,9 +7,17 @@ author: AlphaPerseii3000
 license: MIT
 homepage: https://github.com/AlphaPerseii3000/jev-router
 tags: [routing, models, reasoning, ollama-cloud, decisions]
-# No ``provides_middleware:`` key: the manifest schema has no such field (it was warned about as
-# "unknown manifest field(s) ignored" on every load). Middleware is wired by the code path
-# ``ctx.register_middleware("llm_request", ...)`` in __init__.py — the manifest never declared it.
+# ``provides_middleware`` is not in the host's ``_KNOWN_MANIFEST_FIELDS``, so declaring it emits an
+# "unknown manifest field(s) ignored" warning on every load. It is declared anyway, deliberately:
+# ``hermes plugins validate`` diffs the manifest against what ``register(ctx)`` actually wires and
+# FAILS an entry whose middleware is undeclared ("undeclared middleware registered (not in
+# provides_middleware): llm_request"). That failure is the plugin-catalog admission gate, so an
+# undeclared middleware means no catalog entry. A benign load-time warning is the cheaper of the two
+# evils. The middleware itself stays wired in code — ``ctx.register_middleware("llm_request", ...)``
+# in __init__.py. If upstream ever adds the key to the manifest schema, the warning disappears and
+# nothing here needs to change.
+provides_middleware:
+  - llm_request
 provides_hooks:
   - on_session_end
   - post_llm_call
