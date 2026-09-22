@@ -88,7 +88,7 @@ def _route(router, settings: Settings, task: str, context: str = "") -> str:
         ]
 
     decision, reason = router.client(settings).decide(
-        messages, settings.grid, current_model=settings.default_model
+        messages, settings.grid
     )
     if decision is None:
         return json.dumps(

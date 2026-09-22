@@ -86,7 +86,7 @@ def _status_text(router, settings: Settings, recent: int = 5) -> str:
 
 def _route_text(router, settings: Settings, task: str) -> str:
     decision, reason = router.client(settings).decide(
-        [{"role": "user", "content": task}], settings.grid, current_model=settings.default_model
+        [{"role": "user", "content": task}], settings.grid
     )
     if decision is None:
         return f"No route ({reason}). {_hint_for(reason)}"

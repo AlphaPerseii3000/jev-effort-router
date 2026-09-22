@@ -34,7 +34,7 @@ def test_payload_matches_the_documented_shape(monkeypatch):
     transport = StubTransport([StubResponse(decision_payload())])
     client, settings = make(transport)
 
-    client.decide(MESSAGES, DEFAULT_GRID, platform="cli", provider="ollama-cloud", current_model="glm-5.3")
+    client.decide(MESSAGES, DEFAULT_GRID, platform="cli", provider="ollama-cloud")
 
     payload = transport.last_payload
     assert payload["model"] == settings.jev_model == "typesafe/jev-1.13"
@@ -46,7 +46,8 @@ def test_payload_matches_the_documented_shape(monkeypatch):
     assert "première question" in state["recent_context"]
     assert state["surface"] == "cli"
     assert state["provider"] == "ollama-cloud"
-    assert state["currently_configured_model"] == "glm-5.3"
+    # The configured model is deliberately NOT sent: it anchors the decision on itself.
+    assert "currently_configured_model" not in state
 
     questions = payload["questions"]
     assert questions["model_route"]["type"] == "choice"

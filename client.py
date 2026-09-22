@@ -160,13 +160,18 @@ class JevClient:
         *,
         platform: str = "",
         provider: str = "",
-        current_model: str = "",
     ) -> Tuple[Optional[Decision], Optional[str]]:
         """Ask Jev for a model and an effort level.
 
         Returns ``(decision, None)`` on a usable answer and ``(None, reason)`` otherwise. A
         partially usable answer still yields a decision: a confident model with an unconfident
         effort degrades only the effort, and vice versa.
+
+        Note the absence of a ``current_model`` argument. It used to be forwarded into the
+        request `state`, and measurement against the live endpoint showed it anchors Jev on the
+        model the operator already has configured — a code-debugging task switched from
+        ``kimi-k3`` (4/4 calls without it) to ``deepseek-v4.1-flash`` (4/4 calls with it).
+        Telling Jev what is configured defeats the purpose of asking it.
         """
         settings = self._settings
         if not api_key():
@@ -179,7 +184,6 @@ class JevClient:
             context_turns=settings.context_turns,
             platform=platform,
             provider=provider,
-            current_model=current_model,
         )
 
         started = time.monotonic()

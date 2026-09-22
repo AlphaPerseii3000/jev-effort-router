@@ -124,9 +124,15 @@ def build_state(
     context_turns: int,
     platform: str = "",
     provider: str = "",
-    current_model: str = "",
 ) -> Dict[str, Any]:
-    """The ``state`` object: only the context the two questions need."""
+    """The ``state`` object: only the context the two questions need.
+
+    Deliberately absent: any mention of the model currently configured. Sending it anchors the
+    decision on that model — measured against the live endpoint, ``current_model`` flipped a
+    code-debugging task from ``kimi-k3`` (option 2, 4/4 calls) to the configured
+    ``deepseek-v4.1-flash`` (option 1, 4/4 calls). Jev is told what the task is, not what the
+    operator happens to have set; that is the whole point of asking it.
+    """
     state: Dict[str, Any] = {
         "user_message": _clean(last_user_message(messages), MESSAGE_CHAR_LIMIT),
         "recent_context": recent_context(messages, context_turns),
@@ -135,8 +141,6 @@ def build_state(
         state["surface"] = platform
     if provider:
         state["provider"] = provider
-    if current_model:
-        state["currently_configured_model"] = current_model
     return state
 
 
@@ -164,7 +168,6 @@ def build_payload(
     context_turns: int,
     platform: str = "",
     provider: str = "",
-    current_model: str = "",
 ) -> Dict[str, Any]:
     """The complete Decisions API request body."""
     return {
@@ -174,7 +177,6 @@ def build_payload(
             context_turns=context_turns,
             platform=platform,
             provider=provider,
-            current_model=current_model,
         ),
         "questions": build_questions(grid),
     }

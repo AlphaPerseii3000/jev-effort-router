@@ -209,7 +209,6 @@ class Router:
                 settings.grid,
                 platform=where.platform,
                 provider=where.provider,
-                current_model=where.model,
             )
         except Exception as exc:  # noqa: BLE001 - belt and braces around the client
             logger.warning("jev-router: decision call failed (%s); leaving request untouched", exc)
