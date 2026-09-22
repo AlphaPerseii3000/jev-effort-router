@@ -1,4 +1,13 @@
-"""Agent-facing tools: ask the router what it sees and what it would do."""
+"""Agent-facing tools: ask the router what it sees and what it would do.
+
+The host's tool registry invokes a registered handler as ``handler(args, **context)`` — the
+model's arguments arrive as ONE dict in the first positional slot and the per-call context
+(``task_id``, ``session_id``, ...) as signature-inspected keyword arguments. A handler shaped
+``handler(recent: int = 5, **_)`` therefore binds the arguments dict to ``recent`` and raises
+``TypeError: int() argument must be ... not 'dict'`` on every parameterised call, while the
+no-argument form (``{}``, or kwargs only) silently works — which is how the bug hid. Every
+handler below takes ``args`` first.
+"""
 
 from __future__ import annotations
 
@@ -131,13 +140,32 @@ def _hint_for(reason: Any) -> str:
     return "The decision was unusable; the turn would keep the configured model."
 
 
-def build_tool_registrations(router, get_settings: Callable[[], Settings]) -> List[Tuple[Dict[str, Any], Callable[..., str]]]:
-    """``(schema, handler)`` pairs for ``ctx.register_tool``."""
+def build_tool_registrations(
+    router, get_settings: Callable[[], Settings]
+) -> List[Tuple[Dict[str, Any], Callable[..., str]]]:
+    """``(schema, handler)`` pairs for ``ctx.register_tool``.
 
-    def status_handler(recent: int = 5, **_: Any) -> str:
-        return _status(router, get_settings(), recent=recent)
+    The handlers are called exactly as ``tools/registry.py::dispatch`` calls them —
+    ``handler(args, **context)``, where ``args`` is the model's argument dict — so they must
+    accept that dict positionally. ``**context`` swallows the per-call keys the dispatcher
+    injects (``task_id``, ``session_id``, ``user_task``, ``parent_agent``, ...).
+    """
 
-    def route_handler(task: str = "", context: str = "", **_: Any) -> str:
-        return _route(router, get_settings(), task, context)
+    def _arg(args: Any, key: str, default: Any = None) -> Any:
+        """One value out of the arguments dict, whichever way the host hands it over."""
+        if isinstance(args, dict):
+            return args.get(key, default)
+        return getattr(args, key, default) if args is not None else default
+
+    def status_handler(args: Any = None, **_: Any) -> str:
+        return _status(router, get_settings(), recent=_arg(args, "recent", 5))
+
+    def route_handler(args: Any = None, **_: Any) -> str:
+        return _route(
+            router,
+            get_settings(),
+            task=_arg(args, "task", ""),
+            context=_arg(args, "context", ""),
+        )
 
     return [(STATUS_SCHEMA, status_handler), (ROUTE_SCHEMA, route_handler)]

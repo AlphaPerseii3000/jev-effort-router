@@ -74,9 +74,26 @@ def test_manifest_declares_exactly_what_is_registered(plugin, tmp_path, monkeypa
 
     plugin.register(ctx)
 
-    assert list(manifest["provides_middleware"]) == sorted(ctx.middleware)
+    # Middleware has no manifest field in the host's schema (declaring one only produces an
+    # "unknown manifest field(s) ignored" warning per load), so it is asserted on code alone.
     assert sorted(manifest["provides_tools"]) == sorted(ctx.tools)
     assert sorted(manifest["provides_hooks"]) == sorted(ctx.hooks)
+
+
+def test_manifest_fields_are_known_to_the_host():
+    """Every key in plugin.yaml must be one the installed Hermes understands.
+
+    An unknown key is not fatal — the host warns and loads anyway — which is exactly why it went
+    unnoticed: the declaration looked like documentation while doing nothing. Skips when the suite
+    runs outside a Hermes install.
+    """
+    yaml = pytest.importorskip("yaml")
+    manifest_module = pytest.importorskip("hermes_cli.plugins_manifest")
+
+    manifest = yaml.safe_load((ROOT / "plugin.yaml").read_text(encoding="utf-8"))
+    unknown = sorted(set(manifest) - set(manifest_module._KNOWN_MANIFEST_FIELDS))
+
+    assert unknown == []
 
 
 def test_register_does_no_network_io(plugin, tmp_path, monkeypatch):
@@ -118,13 +135,108 @@ def test_status_tool_reports_the_grid_and_the_audit(plugin, tmp_path, monkeypatc
     ctx = StubContext(config={}, state=StubState(tmp_path))
     plugin.register(ctx)
 
-    payload = json.loads(ctx.tools["jev_router_status"]["handler"](recent=3))
+    payload = json.loads(ctx.tools["jev_router_status"]["handler"]({"recent": 3}))
 
     assert payload["enabled"] is True
     assert payload["api_key_present"] is True
     assert len(payload["grid"]) == 6
     assert payload["grid"][0]["model"] == "deepseek-v4.1-flash"
     assert payload["audit"]["records"] == 0
+
+
+class _FakeEntry:
+    """Enough of ``tools.registry.ToolEntry`` for a host-shaped dispatch."""
+
+    def __init__(self, handler) -> None:
+        self.handler = handler
+        self.is_async = False
+
+
+def _dispatch_like_the_host(handler, args):
+    """Call a tool handler the way ``tools/registry.py::dispatch`` does.
+
+    ``kwargs = _kwargs_accepted_by(entry.handler, kwargs)`` filters the injected context down to
+    what the signature accepts, then the handler runs as ``handler(args, **kwargs)``. Reproduced
+    here without the host so the suite stays runnable outside a Hermes install — the bug this
+    covers was a handler signature the no-argument path happened to tolerate.
+    """
+    import inspect
+
+    context = {
+        "task_id": None,
+        "session_id": "session-1",
+        "user_task": "u",
+        "parent_agent": None,
+        "turn_id": "turn-1",
+    }
+    signature = inspect.signature(handler)
+    accepts_kwargs = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in signature.parameters.values()
+    )
+    kwargs = (
+        context
+        if accepts_kwargs
+        else {key: value for key, value in context.items() if key in signature.parameters}
+    )
+    return handler(args, **kwargs)
+
+
+@pytest.mark.parametrize("args", [{}, {"recent": 3}, {"recent": None}])
+def test_status_tool_accepts_the_arguments_dict_the_host_passes(plugin, tmp_path, monkeypatch, args):
+    """The host hands the model's arguments over as one positional dict.
+
+    A handler declaring ``handler(recent=5)`` binds that dict to ``recent`` and raises
+    ``TypeError: int() argument must be ... not 'dict'`` — on every call that carried a parameter,
+    while the empty-arguments call kept working.
+    """
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    ctx = StubContext(config={}, state=StubState(tmp_path))
+    plugin.register(ctx)
+
+    payload = json.loads(_dispatch_like_the_host(ctx.tools["jev_router_status"]["handler"], args))
+
+    assert payload["enabled"] is True
+    assert len(payload["grid"]) == 6
+
+
+@pytest.mark.parametrize(
+    "args",
+    [
+        {"task": "debug this crash", "context": "a stack trace"},
+        {"task": "debug this crash"},
+    ],
+)
+def test_route_tool_accepts_the_arguments_dict_the_host_passes(plugin, tmp_path, monkeypatch, args):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    ctx = StubContext(config={}, state=StubState(tmp_path))
+    plugin.register(ctx)
+
+    from client import JevClient
+    from stubs import StubResponse, StubTransport, decision_payload
+
+    transport = StubTransport([StubResponse(decision_payload("2", 0.9, "high", 0.9))])
+    # The registered middleware is the router's bound method; its ``__self__`` is the router.
+    router = ctx.middleware["llm_request"].__self__
+    router.client = lambda settings: JevClient(settings, transport=transport)
+
+    payload = json.loads(_dispatch_like_the_host(ctx.tools["jev_router_route"]["handler"], args))
+
+    assert payload["routed"] is True
+    assert payload["model"] == "kimi-k3"
+    assert payload["effort"] == "high"
+    # The task reached Jev; the optional context did not break the call either way.
+    assert transport.call_count == 1
+
+
+def test_route_tool_without_a_task_is_a_clean_error(plugin, tmp_path, monkeypatch):
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    ctx = StubContext(config={}, state=StubState(tmp_path))
+    plugin.register(ctx)
+
+    payload = json.loads(_dispatch_like_the_host(ctx.tools["jev_router_route"]["handler"], {}))
+
+    assert payload == {"error": "task must not be empty"}
 
 
 def test_slash_command_status_grid_and_usage(plugin, tmp_path, monkeypatch):

@@ -7,8 +7,9 @@ author: AlphaPerseii3000
 license: MIT
 homepage: https://github.com/AlphaPerseii3000/jev-router
 tags: [routing, models, reasoning, ollama-cloud, decisions]
-provides_middleware:
-  - llm_request
+# No ``provides_middleware:`` key: the manifest schema has no such field (it was warned about as
+# "unknown manifest field(s) ignored" on every load). Middleware is wired by the code path
+# ``ctx.register_middleware("llm_request", ...)`` in __init__.py — the manifest never declared it.
 provides_hooks:
   - on_session_end
   - post_llm_call
