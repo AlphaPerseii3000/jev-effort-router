@@ -37,10 +37,28 @@ hermes plugins install AlphaPerseii3000/jev-router
 hermes plugins enable jev-router
 ```
 
-Hermes scans a community plugin on install and may refuse one that rewrites outgoing provider requests
-without an explicit override — the scan returns a CAUTION verdict here by design, because routing
-necessarily sends a bounded slice of conversation context to an external decision API. If the install is
-refused, review the findings and re-run with `--force`:
+Hermes scans a community plugin on install and **blocks this one by default** — verified on 0.21.4, not
+assumed:
+
+```text
+Decision: BLOCKED — Blocked (community source + caution verdict, 4 findings). Use --force to override.
+```
+
+There are two layers and they disagree, which is worth knowing before you file a bug:
+
+- `hermes plugins validate <dir>` reports **one** finding: `caution`, `context_exfil`
+  (`docs/jev-decisions-api.md:46`).
+- `hermes plugins install` reports **four**: that same `HIGH exfiltration` finding, plus three
+  `MEDIUM supply_chain` findings for `pip install` lines in `.github/workflows/tests.yml` and the
+  README's own install snippet.
+
+Neither the three MEDIUM findings nor the HIGH one are a defect to fix here: the supply-chain ones are
+text matches on the words `pip install` in documentation and CI — the install path itself never executes
+them — and the exfiltration finding is the plugin's documented purpose, because routing necessarily
+sends a bounded slice of conversation context to an external decision API. The scanner does not
+distinguish a docstring describing a network call from a hostile one, so the verdict is expected.
+
+Review the findings above and re-run with `--force` to accept them:
 
 ```bash
 hermes plugins install AlphaPerseii3000/jev-router --force
