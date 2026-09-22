@@ -228,17 +228,18 @@ class Router:
         Working from ``original_request`` keeps this router idempotent when more than one
         middleware rewrites the same call, and makes "the request is unchanged" literally true
         on the no-route path.
+
+        Only the top-level ``reasoning_effort`` is written. ``reasoning_config`` is a
+        *params-level* input that the provider profile consumes to derive that top-level field
+        (``agent/transports/chat_completions.py::_build_kwargs_from_profile``, then
+        ``plugins/model-providers/ollama-cloud/__init__.py`` which returns only
+        ``reasoning_effort``). It is never a wire kwarg, and leaving it in the final payload
+        makes Ollama reject the entire call with "Completions.create() got an unexpected keyword
+        argument 'reasoning_config'" — a hard turn failure, not a degraded route.
         """
         routed = dict(original_request)
         routed["model"] = decision.model
         if decision.effort:
-            # The provider profile re-derives the top-level field from `reasoning_config`, so
-            # write both: the value stays coherent whichever the transport ends up reading.
-            existing = routed.get("reasoning_config")
-            config = dict(existing) if isinstance(existing, dict) else {}
-            config["enabled"] = True
-            config["effort"] = decision.effort
-            routed["reasoning_config"] = config
             routed[EFFORT_WIRE_KEY] = decision.effort
         else:
             routed.pop(EFFORT_WIRE_KEY, None)

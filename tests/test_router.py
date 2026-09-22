@@ -62,7 +62,10 @@ def test_routes_model_and_effort(tmp_path):
     assert result is not None
     assert result["request"]["model"] == "kimi-k3"
     assert result["request"]["reasoning_effort"] == "high"
-    assert result["request"]["reasoning_config"] == {"enabled": True, "effort": "high"}
+    # `reasoning_config` must NOT be in the payload: it is a params-level input the provider
+    # profile consumes to derive the top-level field, and Ollama rejects the whole call if it
+    # reaches the wire.
+    assert "reasoning_config" not in result["request"]
     assert result["source"] == "jev-router"
 
 
