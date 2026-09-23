@@ -4,40 +4,27 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.2.0] - 2026-09-23
+## [0.2.2] - 2026-09-23
 
-### Changed
+### Fixed
 
-- **Renamed: `jev-router` → `jev-effort-router`** (plugin id, repository, CLI command, slash command,
-  toolset, tools, Python package and pyproject distribution name).
+- **Replayed audit records now re-emit the two measured confidences instead of a collapsed copy.**
+  The per-turn memo stored a single `confidence = max(model_confidence, effort_confidence)` and the
+  replay path recopied that value into *both* confidence fields of every follow-up record in the turn.
+  Verified in production: a fresh `0.34 / 0.65` decision re-reported as `0.65 / 0.65` on every replay,
+  so the effort confidence was disguised as a model confidence Jev never gave. On a tool-heavy turn
+  (≈1 fresh record for ≈11 replays) the tail was dominated by that invented pair, so anyone tuning the
+  threshold off the tail calibrated against a number that was not the decision. The memo now keeps both
+  confidences, and the replay re-emits that pair. This is an audit/observability fix — routing and
+  replay behaviour are unchanged, and the `grid_coverage` report already filtered replayed records.
 
-  The old name was both **taken and less accurate**. On GitHub, `jev-router` is a 340-star project
-  (`gargpratyush/jev-router`) that also picks the cheapest model, created six days before this one, and
-  `jev-router in:name` returns 155 repositories — searching the old name finds someone else. More
-  importantly, "router" alone under-sells what this plugin does: it decides the **model** *and* the
-  **reasoning effort**, per turn. Measured across the 241-entry catalog, no other entry does that —
-  every other routing entry picks a model and stops, and the only two entries that touch reasoning effort
-  (`reasoning-switch`, `compact-reasoning-label`) require you to move the level by hand. The name now
-  leads with the capability that has no competitor.
-
-  Renaming the id changes what a user installs, so this is a breaking change for anyone who installed
-  `jev-router` directly: remove it and install the new name. There were no catalog or released users at
-  the time of the rename.
-
-| Old | New |
-|---|---|
-| `hermes plugins install …/jev-router` | `hermes plugins install …/jev-effort-router` |
-| `/jev-router status` | `/jev-effort-router status` |
-| `hermes jev-router status` | `hermes jev-effort-router status` |
-| `jev_router_status` / `jev_router_route` | `jev_effort_router_status` / `jev_effort_router_route` |
-| `plugins.entries.jev-router.settings.*` | `plugins.entries.jev-effort-router.settings.*` |
-| `hermes-plugin-jev-router` (pip) | `hermes-plugin-jev-effort-router` |
-
-  The README also now leads with the model **and effort** combination instead of opening on the
-  Zürich→London 7.1-second benchmark, which sold speed rather than the capability this plugin is alone in
-  offering.
-
-## [Unreleased]
+- **Replayed records report unmeasured fields as `null`, never as a copied value.** A replay only
+  persisted the model, effort and confidences, so its record used to carry `effort_choice: ""`,
+  `model_probabilities: {}`, `effort_probabilities: {}` and `alternatives: []`. Any aggregate over the
+  raw tail silently read those as "this decision measured nothing". They are now `null` (and the confidences
+  above are no longer the collapsed max), because an audit record must record what was measured and say
+  `null` — omit — for what was not. Collapsing the confidences to a max also destroyed *which* of the two
+  answers was weak; the pair is kept so a consumer can tell a model-side from an effort-side fallback.
 
 ## [0.2.1] - 2026-09-23
 
@@ -124,6 +111,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `routes.jsonl` next to the 880-record history of the old one. `grid_coverage` therefore reports a
   window of a handful of turns until the new trail fills. The old directory is left in place and is
   the source of truth for the pre-rename history.
+
+## [0.2.0] - 2026-09-23
+
+### Changed
+
+- **Renamed: `jev-router` → `jev-effort-router`** (plugin id, repository, CLI command, slash command,
+  toolset, tools, Python package and pyproject distribution name).
+
+  The old name was both **taken and less accurate**. On GitHub, `jev-router` is a 340-star project
+  (`gargpratyush/jev-router`) that also picks the cheapest model, created six days before this one, and
+  `jev-router in:name` returns 155 repositories — searching the old name finds someone else. More
+  importantly, "router" alone under-sells what this plugin does: it decides the **model** *and* the
+  **reasoning effort**, per turn. Measured across the 241-entry catalog, no other entry does that —
+  every other routing entry picks a model and stops, and the only two entries that touch reasoning effort
+  (`reasoning-switch`, `compact-reasoning-label`) require you to move the level by hand. The name now
+  leads with the capability that has no competitor.
+
+  Renaming the id changes what a user installs, so this is a breaking change for anyone who installed
+  `jev-router` directly: remove it and install the new name. There were no catalog or released users at
+  the time of the rename.
+
+| Old | New |
+|---|---|
+| `hermes plugins install …/jev-router` | `hermes plugins install …/jev-effort-router` |
+| `/jev-router status` | `/jev-effort-router status` |
+| `hermes jev-router status` | `hermes jev-effort-router status` |
+| `jev_router_status` / `jev_router_route` | `jev_effort_router_status` / `jev_effort_router_route` |
+| `plugins.entries.jev-router.settings.*` | `plugins.entries.jev-effort-router.settings.*` |
+| `hermes-plugin-jev-router` (pip) | `hermes-plugin-jev-effort-router` |
+
+  The README also now leads with the model **and effort** combination instead of opening on the
+  Zürich→London 7.1-second benchmark, which sold speed rather than the capability this plugin is alone in
+  offering.
 
 ## [0.1.1] - 2026-09-23
 
@@ -215,6 +235,7 @@ First release.
   `grid`, `tail`, `reset`), and the `jev_effort_router_status` / `jev_effort_router_route` agent tools.
 - 74 tests, driving the real middleware callback against a stub Decisions API with no network access.
 
+[0.2.2]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.2.2
 [0.2.1]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.2.1
 [0.2.0]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.2.0
 [0.1.1]: https://github.com/AlphaPerseii3000/jev-router/releases/tag/v0.1.1

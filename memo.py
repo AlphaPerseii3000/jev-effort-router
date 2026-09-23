@@ -34,7 +34,11 @@ class Memo:
     model: str
     effort: Optional[str]
     effort_requested: Optional[str]
-    confidence: float
+    #: The TWO measured confidences, kept apart. Collapsing them to ``max()`` destroyed which
+    #: answer was weak, and a replayed record re-emitting that single value as both confidences
+    #: would report a number that was never Jev's answer on one of the two dimensions.
+    model_confidence: float
+    effort_confidence: float
     choice: str
     fallback_reasons: tuple = ()
 

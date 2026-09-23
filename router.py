@@ -163,7 +163,8 @@ class Router:
                     model=decision.model,
                     effort=decision.effort,
                     effort_requested=decision.effort_requested,
-                    confidence=max(decision.model_confidence, decision.effort_confidence),
+                    model_confidence=decision.model_confidence,
+                    effort_confidence=decision.effort_confidence,
                     choice=decision.model_choice,
                     fallback_reasons=decision.fallback_reasons,
                 )
@@ -286,18 +287,25 @@ class Router:
         api_call_count: Any = 0,
         replayed: bool = False,
     ) -> None:
+        # An audit record records what was measured and says ``null`` for what was not. On a
+        # replayed turn the distributions, alternatives and effort-choice string were not stored,
+        # so the record must present them as absent (`None`) — never as a value copied from a
+        # neighbouring field. The confidences stay: they were measured as a pair and re-emitted
+        # as that pair.
         record: Dict[str, Any] = {
             "event": "route",
             "model": decision.model,
             "effort": decision.effort,
             "effort_requested": decision.effort_requested,
             "model_choice": decision.model_choice,
-            "effort_choice": decision.effort_choice,
+            # ``effort_choice`` is a string on a fresh decision; a replay carries "" meaning
+            # "not measured at replay", which the audit surfaces as null.
+            "effort_choice": decision.effort_choice if decision.effort_choice else None,
             "model_confidence": round(decision.model_confidence, 4),
             "effort_confidence": round(decision.effort_confidence, 4),
-            "model_probabilities": decision.model_probabilities,
-            "effort_probabilities": decision.effort_probabilities,
-            "alternatives": list(decision.alternatives),
+            "model_probabilities": decision.model_probabilities if decision.model_probabilities else None,
+            "effort_probabilities": decision.effort_probabilities if decision.effort_probabilities else None,
+            "alternatives": list(decision.alternatives) if decision.alternatives else None,
             "latency_ms": decision.latency_ms,
             "fallback_reasons": list(decision.fallback_reasons),
             "jev_model": settings.jev_model,
@@ -390,13 +398,21 @@ class _Where:
 
 
 def _decision_from_memo(memo: Memo) -> Decision:
-    """Present a replayed memo through the same shape as a fresh decision."""
+    """Present a replayed memo through the same shape as a fresh decision.
+
+    Only the fields that were actually measured and are still load-bearing at replay are
+    re-emitted. The confidences were measured as a pair, so they are re-emitted as that pair
+    (never collapsed, never copied one onto the other). Everything that was *not* stored —
+    the per-criterion distributions, the full alternative list, the effort-choice string —
+    is left empty/``None`` rather than reconstructed from a sibling field: an audit record
+    must never report a value that was not measured at replay.
+    """
     return Decision(
         model=memo.model,
         effort=memo.effort,
         effort_requested=memo.effort_requested,
-        model_confidence=memo.confidence,
-        effort_confidence=memo.confidence,
+        model_confidence=memo.model_confidence,
+        effort_confidence=memo.effort_confidence,
         model_choice=memo.choice,
         effort_choice="",
         alternatives=(),

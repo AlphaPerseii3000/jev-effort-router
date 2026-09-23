@@ -191,6 +191,83 @@ def test_route_per_session_decides_once(tmp_path):
     assert transport.call_count == 1
 
 
+# -- replayed audit records keep the measured confidences --------------------------
+
+
+def test_replayed_route_reemits_both_measured_confidences(tmp_path):
+    """The model and effort confidences are measured independently and must survive a replay.
+
+    Storing ``max(model, effort)`` in the memo and re-emitting it as both fields made a fresh
+    ``0.34/0.65`` decision re-report as ``0.65/0.65`` — the effort confidence masquerading as a
+    model confidence Jev never gave — and destroyed which side was the weak one.
+    """
+    transport = StubTransport(
+        [StubResponse(decision_payload("1", 0.34, "medium", 0.65, model_probabilities={"1": 0.46, "5": 0.23}))]
+    )
+    router, _ = build(tmp_path, transport)
+
+    route(router, turn_id="turn-1", api_request_id="turn-1:api:1")
+    route(router, turn_id="turn-1", api_request_id="turn-1:api:2")
+
+    lines = (tmp_path / "routes.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    fresh = json.loads(lines[0])
+    replayed = json.loads(lines[1])
+
+    assert fresh["replayed"] is False
+    assert replayed["replayed"] is True
+    assert (replayed["model_confidence"], replayed["effort_confidence"]) == (0.34, 0.65)
+
+
+def test_replayed_route_never_copies_unmeasured_fields(tmp_path):
+    """What was not stored at replay is reported as ``null`` — never copied from a sibling field.
+
+    The per-criterion distributions, the full alternatives and the effort-choice string are only
+    present on the fresh decision. A replayed record that filled them in would let a consumer of
+    the raw tail compute over values that were never measured.
+    """
+    transport = StubTransport(
+        [StubResponse(decision_payload("1", 0.9, "medium", 0.9, model_probabilities={"1": 0.9, "2": 0.1}))]
+    )
+    router, _ = build(tmp_path, transport)
+
+    route(router, turn_id="turn-1", api_request_id="turn-1:api:1")
+    route(router, turn_id="turn-1", api_request_id="turn-1:api:2")
+
+    lines = (tmp_path / "routes.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    fresh = json.loads(lines[0])
+    replayed = json.loads(lines[1])
+
+    # The fresh decision carries the measured surfaces.
+    assert fresh["model_probabilities"] == {"1": 0.9, "2": 0.1}
+    assert fresh["effort_choice"] == "medium"
+    assert fresh["alternatives"]
+
+    # The replay does not invent them.
+    assert replayed["model_probabilities"] is None
+    assert replayed["effort_probabilities"] is None
+    assert replayed["effort_choice"] is None
+    assert replayed["alternatives"] is None
+
+
+def test_decision_from_memo_preserves_the_failing_dimension(tmp_path):
+    """`_decision_from_memo` re-emits the pair of confidences as stored — not their max."""
+    from memo import Memo
+    from router import _decision_from_memo
+
+    memo = Memo(
+        model="deepseek-v4.1-flash",
+        effort="medium",
+        effort_requested="medium",
+        model_confidence=0.12,
+        effort_confidence=0.93,
+        choice="1",
+    )
+    decision = _decision_from_memo(memo)
+
+    assert decision.model_confidence == 0.12
+    assert decision.effort_confidence == 0.93
+
+
 # -- fail open ---------------------------------------------------------------------
 
 

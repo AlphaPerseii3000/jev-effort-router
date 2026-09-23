@@ -77,7 +77,7 @@ def test_audit_truncates_when_over_the_record_cap(tmp_path, monkeypatch):
 
 def test_memo_replays_within_the_ttl(tmp_path):
     memo = TurnMemo()
-    entry = Memo(model="kimi-k3", effort="high", effort_requested="high", confidence=0.9, choice="2")
+    entry = Memo(model="kimi-k3", effort="high", effort_requested="high", model_confidence=0.9, effort_confidence=0.8, choice="2")
 
     memo.put_turn("turn-1", entry)
 
@@ -91,7 +91,7 @@ def test_memo_expires(tmp_path, monkeypatch):
     import memo as memo_module
 
     memo = TurnMemo()
-    entry = Memo(model="m", effort=None, effort_requested=None, confidence=0.9, choice="1")
+    entry = Memo(model="m", effort=None, effort_requested=None, model_confidence=0.9, effort_confidence=0.7, choice="1")
     memo.put_turn("turn-1", entry)
 
     monkeypatch.setattr(memo_module, "TURN_TTL_S", -1.0)
@@ -100,7 +100,7 @@ def test_memo_expires(tmp_path, monkeypatch):
 
 def test_memo_is_bounded():
     memo = TurnMemo(max_turns=2)
-    entry = Memo(model="m", effort=None, effort_requested=None, confidence=0.9, choice="1")
+    entry = Memo(model="m", effort=None, effort_requested=None, model_confidence=0.9, effort_confidence=0.7, choice="1")
     for index in range(5):
         memo.put_turn(f"turn-{index}", entry)
 
@@ -110,7 +110,7 @@ def test_memo_is_bounded():
 
 def test_memo_clear():
     memo = TurnMemo()
-    entry = Memo(model="m", effort=None, effort_requested=None, confidence=0.9, choice="1")
+    entry = Memo(model="m", effort=None, effort_requested=None, model_confidence=0.9, effort_confidence=0.7, choice="1")
     memo.put_turn("turn-1", entry)
     memo.put_session("session-1", entry)
 
