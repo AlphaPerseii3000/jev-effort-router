@@ -39,6 +39,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-23
+
 ### Changed
 
 - **The six grid profiles were rewritten to name task families, and the two questions are now
@@ -60,6 +62,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   whole payload is stated in one language. Ids, order and the six-entry count are untouched;
   `tests/test_grid.py::test_no_profile_is_a_task_free_superlative` now fails a profile that praises
   a model without naming a task.
+
 - Measured against the live endpoint, 5 calls × 8 task families = 40 calls per variant (the decision
   is not deterministic, so one call proves nothing). Applied model = the choice after the 0.5
   confidence threshold and the configured fallback, i.e. what actually serves the turn.
@@ -81,16 +84,19 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   0.5 threshold 25/40 → 30/40. The generalist is untouched where it should be — it still takes
   ordinary writing and web copy — and two previously degraded-and-scattered tasks now route
   confidently. Median decision latency 311 ms in both variants.
+
 - The English-instruction change alone was measured separately first (40 calls): it moved
   `analysis` from `glm-5.3` 1/5 to `deepseek-v4.1-flash` 5/5 at 0.50 — i.e. it removed the only GLM
   signal without adding another. It is the grid rewrite that produces the effect; the instructions
   change rides along for consistency of payload language and is not claimed as a gain.
+
 - A control run with two differently-worded variants of the first profile (with/without "the usual
   choice", and "cheap for its size" vs "cheapest of the full-size models") confirmed the effect does
   not depend on that phrase: 40 calls each, identical distributions on 7 of 8 task families, and the
   design prompt at 0.61/0.63 (applied, routed) versus 0.45/0.47 (below threshold, degraded to the
   fallback). The phrase is kept for the generalist, deliberately, so a plain writing turn does not
   fall through to the fallback.
+
 - Evidence quality: 120 live calls across five variants. This measures the mechanism and the
   before/after route distribution; it is not a quality benchmark of the models themselves, and the
   0.95+ confidences on the two GLM tasks are high enough to re-check after any future edit to the
@@ -106,6 +112,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   a turn that replays one decision across a long tool loop is not weighted as if it had decided many
   times. Applied against the real audit trail of this profile, the report names `glm-5.3` under
   `never_chosen` and `glm-5.3-flash` under `below_threshold` — exactly the symptom.
+
 - The same block is rendered on the **text** surfaces (`hermes jev-effort-router status` and the
   `/jev-effort-router status` slash command), not only in the agent tool's JSON: the shell is where an
   operator reads routing state, and a finding that only exists in the tool would stay invisible there.
@@ -118,7 +125,38 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   window of a handful of turns until the new trail fills. The old directory is left in place and is
   the source of truth for the pre-rename history.
 
-- `jev_effort_router_status` and `jev_effort_router_route` now accept the arguments dict the host's tool registry
+## [0.1.1] - 2026-09-23
+
+### Changed
+
+- **The grid profiles are now English, which is a change of payload and therefore of behaviour.**
+  The six criterion strings in `DEFAULT_GRID` are sent to Jev verbatim and are what it weighs; they
+  were French, they are now English (`grid.py`, mirrored in `README.md`, `docs/routing-grid.md`,
+  `docs/jev-decisions-api.md` and `tests/test_grid.py`). The ids, the order and the six-entry count are
+  untouched, and the docstrings now say the criteria are sent in English and that rewording them is a
+  behaviour change rather than an editorial one.
+- Measured against the live endpoint, 4 calls per task before and 4 after (16 calls per variant, the
+  decision is not deterministic so one call proves nothing):
+
+  | Task | Chosen model, French → English | Mean confidence | Calls at/above the 0.5 threshold |
+  |---|---|---|---|
+  | trivial (`2+2`) | `glm-5.3-flash` → `glm-5.3-flash` | 0.477 → 0.350 | 1/4 → 0/4 |
+  | code refactor | `kimi-k3` → `kimi-k3` | 0.520 → 0.550 | 3/4 → 4/4 |
+  | demanding analysis | `glm-5.3` → `glm-5.3` | 0.893 → 0.893 | 4/4 → 4/4 |
+  | sequential tool calling | `minimax-m3` → `minimax-m3` | 0.962 → 0.980 | 4/4 → 4/4 |
+
+  All 16 choices are identical between the two variants: discrimination between the four task
+  categories is unchanged. The only material difference is confidence on the trivial task, which drops
+  from ~0.48 to ~0.35 — further below the 0.5 threshold than it already was. That task was already
+  degraded in 3 of 4 French calls, so the applied model (the configured default, option 1
+  `deepseek-v4.1-flash`) is unchanged in practice; but the English wording makes the tie between
+  `glm-5.3-flash` and `nemotron-3-nano:30b` for a trivial prompt slightly harder to break (0.46/0.36
+  versus 0.56/0.31). One task × 4 calls is thin evidence: this measures the mechanism and one
+  category-level regression in confidence, not a general quality verdict.
+
+### Fixed
+
+- `jev_router_status` and `jev_router_route` now accept the arguments dict the host's tool registry
   passes positionally (`handler(args, **context)`). Both were declared `handler(recent=5)` /
   `handler(task="", context="")`, so the arguments dict was bound to the first parameter and every
   call that carried a parameter failed with
@@ -177,7 +215,7 @@ First release.
   `grid`, `tail`, `reset`), and the `jev_effort_router_status` / `jev_effort_router_route` agent tools.
 - 74 tests, driving the real middleware callback against a stub Decisions API with no network access.
 
+[0.2.1]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.2.1
 [0.2.0]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.2.0
 [0.1.1]: https://github.com/AlphaPerseii3000/jev-router/releases/tag/v0.1.1
 [0.1.0]: https://github.com/AlphaPerseii3000/jev-router/releases/tag/v0.1.0
-[0.2.0]: https://github.com/AlphaPerseii3000/jev-router/releases/tag/v0.2.0

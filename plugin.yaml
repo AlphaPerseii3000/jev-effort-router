@@ -1,5 +1,5 @@
 name: jev-effort-router
-version: 0.2.0
+version: 0.2.1
 manifest_version: 2
 api_version: 1
 description: Route each user turn to the best Ollama:Cloud model and reasoning effort via TypeSafe Jev's decision endpoint. Ollama:Cloud only — no other provider is routed.
