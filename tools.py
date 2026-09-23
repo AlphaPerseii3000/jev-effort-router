@@ -77,6 +77,75 @@ def _grid_unavailable(router, settings: Settings) -> list:
         return []
 
 
+#: How many routed turns the grid-coverage report summarises. This is the window in which a
+#: "rarely chosen" model shows up as a finding rather than as noise.
+GRID_COVERAGE_SAMPLE = 200
+
+
+def _grid_coverage(router, settings: Settings, sample: int = GRID_COVERAGE_SAMPLE) -> dict:
+    """Which grid entries are actually being chosen, and which never survive the threshold.
+
+    A model that is never routed on is invisible from a single turn: the failure mode that kept
+    ``glm-5.3`` and ``glm-5.3-flash`` off the route showed up only as a share of the audit trail.
+    Only first-call records count — a turn replays its decision across a whole tool loop, so
+    counting replayed records would weight long tool turns as if they were extra decisions.
+
+    Two distinct failures are reported, because they have different fixes:
+
+    * ``never_chosen`` — the model is on no criterion's winning side, so Jev never picks it on
+      this workload. Fix the grid wording, not the threshold.
+    * ``below_threshold`` — Jev picks it but the answer is not confident enough to apply, so the
+      turn silently falls back. Fix the criterion text or the threshold.
+    """
+    tail = getattr(router, "tail", None)
+    if not callable(tail):
+        return {}
+    try:
+        records = tail(settings, limit=max(1, int(sample)))
+    except Exception:  # noqa: BLE001 - an observability surface never raises
+        return {}
+    counted = [r for r in records if r.get("event") == "route" and not r.get("replayed")]
+    if not counted:
+        return {}
+
+    # The probabilities are keyed by position ("1".."6"), so the grid gives the mapping back.
+    by_position = {str(i): entry.model_id for i, entry in enumerate(settings.grid, start=1)}
+
+    applied: Dict[str, int] = {}
+    below: Dict[str, int] = {}
+    for record in counted:
+        degraded = "low_confidence" in (record.get("fallback_reasons") or [])
+        if degraded:
+            probabilities = record.get("model_probabilities") or {}
+            best_key, best_value = "", 0.0
+            if isinstance(probabilities, dict):
+                for key, value in probabilities.items():
+                    if isinstance(value, (int, float)) and value > best_value:
+                        best_key, best_value = str(key), float(value)
+            lead = by_position.get(best_key) or str(record.get("chosen_model") or "")
+            if lead:
+                below[lead] = below.get(lead, 0) + 1
+        else:
+            model = str(record.get("model") or "")
+            if model:
+                applied[model] = applied.get(model, 0) + 1
+
+    report: Dict[str, Any] = {
+        "window": len(counted),
+        "applied": applied,
+    }
+    never = [
+        entry.model_id
+        for entry in settings.grid
+        if entry.model_id not in applied and entry.model_id not in below
+    ]
+    if never:
+        report["never_chosen"] = never
+    if below:
+        report["below_threshold"] = below
+    return report
+
+
 def _status(router, settings: Settings, recent: int = 5) -> str:
     records = router.tail(settings, limit=max(1, min(int(recent or 5), 50)))
     payload = {
@@ -97,6 +166,9 @@ def _status(router, settings: Settings, recent: int = 5) -> str:
         },
         "recent": records,
     }
+    coverage = _grid_coverage(router, settings)
+    if coverage:
+        payload["grid_coverage"] = coverage
     # Only present when the provider catalog could actually be read: an empty list is omitted
     # rather than reported as "every model is missing".
     unavailable = _grid_unavailable(router, settings)

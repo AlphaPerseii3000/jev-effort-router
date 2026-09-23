@@ -28,8 +28,8 @@ default so a silent model swap cannot change routing behaviour under the operato
       "type": "choice",
       "instructions": "Which model is best suited to handle this task?",
       "criteria": {
-        "1": "deepseek-v4.1-flash: generalist, excellent value for money, 1M context…",
-        "2": "kimi-k3: top-tier code and agentic work, expensive",
+        "1": "deepseek-v4.1-flash: the usual choice for general work: everyday writing…",
+        "2": "kimi-k3: strongest at complex code and long agentic tasks…",
         "...": "..."
       }
     },

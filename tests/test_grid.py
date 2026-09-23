@@ -24,10 +24,25 @@ def test_criteria_are_keyed_by_position_with_a_readable_profile():
     assert set(mapping) == {"1", "2", "3", "4", "5", "6"}
     assert mapping["1"].startswith("deepseek-v4.1-flash: ")
     assert mapping["1"] == (
-        "deepseek-v4.1-flash: generalist, excellent value for money, 1M context, "
-        "the default choice"
+        "deepseek-v4.1-flash: the usual choice for general work: everyday writing, "
+        "explanation, summarising, ordinary coding and tool use; 1M context; cheap for its size"
     )
     assert mapping["2"].startswith("kimi-k3: ")
+
+
+def test_no_profile_is_a_task_free_superlative():
+    """Every criterion must name a task family, not just praise the model.
+
+    This is the rule the GLM under-routing came from: "excellent value for money" and
+    "excellent in real use for everyday tasks" attached no task to the praise, so they read as
+    safe picks on every prompt and the first-listed model absorbed the GLMs' decisions. See the
+    changelog measurement.
+    """
+    banned = ("excellent", "top-tier", "best-in-class", "state of the art", "powerful")
+    for entry in DEFAULT_GRID:
+        lowered = entry.description.lower()
+        for word in banned:
+            assert word not in lowered, f"{entry.model_id} praises without naming a task: {word}"
 
 
 def test_resolve_by_positional_key():

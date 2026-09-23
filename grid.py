@@ -39,30 +39,42 @@ class Entry:
 
 #: The six benchmarked Ollama:cloud models, in the order they are offered to Jev.
 #: The descriptions are data: they are sent to Jev verbatim as the criteria, in English.
+#:
+#: Every profile names a **task family**, never a superlative free of a task ("excellent value
+#: for money", "excellent in real use"). Those lines were why `glm-5.3` and `glm-5.3-flash` were
+#: almost never chosen: a superlative with no task attached reads as a safe pick on every prompt,
+#: and the model carrying one (deepseek, first on the list) absorbed the decisions that belonged to
+#: the GLMs. The measured effect of naming task families instead is in the changelog.
 DEFAULT_GRID: Tuple[Entry, ...] = (
     Entry(
         "deepseek-v4.1-flash",
-        "generalist, excellent value for money, 1M context, the default choice",
+        "the usual choice for general work: everyday writing, explanation, summarising, "
+        "ordinary coding and tool use; 1M context; cheap for its size",
     ),
     Entry(
         "kimi-k3",
-        "top-tier code and agentic work, expensive, reserve it for complex development tasks",
+        "strongest at complex code and long agentic tasks: multi-file refactors, deep "
+        "debugging, large repositories; slow and the most expensive",
     ),
     Entry(
         "glm-5.3",
-        "deep scientific and logical reasoning, expensive, for tasks with high analytical demands",
+        "strongest at rigorous reasoning: mathematics, logic, science, quantitative and "
+        "financial analysis, where a wrong answer is costly",
     ),
     Entry(
         "glm-5.3-flash",
-        "fast and economical, excellent in real use for everyday tasks",
+        "best reasoning-per-cost on large text: drafting, summarising, translating and "
+        "structured extraction over long documents; fast",
     ),
     Entry(
         "minimax-m3",
-        "good speed/agentic trade-off for tool calling and sequential actions",
+        "fast tool calling: long sequences of API/CLI actions, repetitive automation, "
+        "high throughput",
     ),
     Entry(
         "nemotron-3-nano:30b",
-        "very high throughput, simple tasks only, avoid it for reasoning",
+        "highest throughput and lowest cost: trivial single-step requests only; weak at "
+        "reasoning and at long context",
     ),
 )
 

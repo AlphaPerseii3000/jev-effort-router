@@ -19,19 +19,19 @@ MODEL_QUESTION_ID = "model_route"
 EFFORT_QUESTION_ID = "reasoning_effort"
 
 MODEL_INSTRUCTIONS = (
-    "Quel modèle est le plus adapté pour traiter la demande de l'utilisateur décrite dans "
-    "`user_message`, compte tenu de `recent_context` ?"
+    "Which model is best suited to handle the user's request in `user_message`, given "
+    "`recent_context`? Compare every option on the same axes — what the task actually needs, "
+    "how much it costs, and how fast it is — and pick the single best fit."
 )
 EFFORT_INSTRUCTIONS = (
-    "Quel niveau d'effort de raisonnement la demande décrite dans `user_message` nécessite-t-elle ? "
-    "Un effort élevé coûte plus cher et est plus lent : ne le choisir que si la demande exige "
-    "réellement une analyse profonde."
+    "Which level of reasoning effort does the request in `user_message` require? A high effort "
+    "is slower and more expensive: pick it only when the request genuinely needs deep analysis."
 )
 
 EFFORT_CRITERIA: Dict[str, str] = {
-    "low": "Demande simple, factuelle ou mécanique : réponse courte, pas d'analyse nécessaire.",
-    "medium": "Demande courante nécessitant un peu de raisonnement ou de synthèse.",
-    "high": "Demande complexe : analyse profonde, débogage difficile, conception ou planification.",
+    "low": "Simple, factual or mechanical request: a short answer, no analysis needed.",
+    "medium": "Ordinary request needing a little reasoning or synthesis.",
+    "high": "Complex request: deep analysis, hard debugging, design or planning.",
 }
 
 #: Per-message cap on the text handed to Jev, to stay well inside the 32K context and keep

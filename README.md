@@ -112,6 +112,23 @@ hermes jev-effort-router reset        # drop memoised decisions
 `status` reports whether routing is enabled, whether the key is present, the grid, and the most recent
 decisions. `route` exercises Jev end-to-end without running a turn, and exits non-zero when routing fails.
 
+It also reports `grid_coverage` over the last 200 routed turns, which is how you notice a model the
+router is *not* using:
+
+```
+"grid_coverage": {
+  "window": 38,
+  "applied": { "deepseek-v4.1-flash": 5, "kimi-k3": 3, "glm-5.3-flash": 1 },
+  "never_chosen": ["glm-5.3", "minimax-m3", "nemotron-3-nano:30b"],
+  "below_threshold": { "kimi-k3": 8, "minimax-m3": 7 }
+}
+```
+
+`never_chosen` means Jev never picks that model on this workload — fix the criterion wording in the grid.
+`below_threshold` means Jev picks it but the answer does not clear `confidence_threshold`, so the turn is
+served by the fallback model instead — fix the wording or the threshold. Only first-call records count, so
+a turn that replays one decision across a long tool loop is not counted many times.
+
 Two agent-facing tools are registered as well: `jev_effort_router_status` and `jev_effort_router_route`.
 
 ## Configuration
@@ -164,14 +181,19 @@ The **Profile** column is the criterion string sent to Jev, verbatim, in English
 string: rewriting it changes what Jev is choosing between, so treat it as data. To use your own wording,
 override `grid`.
 
+Every profile names a **task family**. A task-free superlative — "excellent value for money",
+"excellent in real use for everyday tasks" — reads as a safe pick on every prompt, and the model
+carrying one absorbs decisions that belong to the others. That is what kept `glm-5.3` and
+`glm-5.3-flash` out of the route; see the changelog for the before/after measurement.
+
 | # | Model | Profile (as sent to Jev) |
 |---|---|---|
-| 1 | `deepseek-v4.1-flash` | generalist, excellent value for money, 1M context, the default choice |
-| 2 | `kimi-k3` | top-tier code and agentic work, expensive, reserve it for complex development tasks |
-| 3 | `glm-5.3` | deep scientific and logical reasoning, expensive, for tasks with high analytical demands |
-| 4 | `glm-5.3-flash` | fast and economical, excellent in real use for everyday tasks |
-| 5 | `minimax-m3` | good speed/agentic trade-off for tool calling and sequential actions |
-| 6 | `nemotron-3-nano:30b` | very high throughput, simple tasks only, avoid it for reasoning |
+| 1 | `deepseek-v4.1-flash` | the usual choice for general work: everyday writing, explanation, summarising, ordinary coding and tool use; 1M context; cheap for its size |
+| 2 | `kimi-k3` | strongest at complex code and long agentic tasks: multi-file refactors, deep debugging, large repositories; slow and the most expensive |
+| 3 | `glm-5.3` | strongest at rigorous reasoning: mathematics, logic, science, quantitative and financial analysis, where a wrong answer is costly |
+| 4 | `glm-5.3-flash` | best reasoning-per-cost on large text: drafting, summarising, translating and structured extraction over long documents; fast |
+| 5 | `minimax-m3` | fast tool calling: long sequences of API/CLI actions, repetitive automation, high throughput |
+| 6 | `nemotron-3-nano:30b` | highest throughput and lowest cost: trivial single-step requests only; weak at reasoning and at long context |
 
 Adding a model is a reviewed change to [`docs/routing-grid.md`](docs/routing-grid.md) with benchmark
 evidence behind it — not a config-only act. See that file for the benchmark sources and pricing.

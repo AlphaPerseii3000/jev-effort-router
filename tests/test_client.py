@@ -57,6 +57,27 @@ def test_payload_matches_the_documented_shape(monkeypatch):
     assert set(questions["reasoning_effort"]["criteria"]) == {"low", "medium", "high"}
 
 
+def test_payload_is_stated_in_one_language(monkeypatch):
+    """The whole payload must be English — instructions, criteria and effort levels alike.
+
+    A half-translated payload is a half-measured one: the grid profiles, the two question
+    instructions and the effort criteria all travel in the same request and are all weighed.
+    """
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    transport = StubTransport([StubResponse(decision_payload())])
+    client, _ = make(transport)
+
+    client.decide(MESSAGES, DEFAULT_GRID, platform="cli", provider="ollama-cloud")
+
+    french = set("àâäçéèêëîïôöùûüœ")
+    questions = transport.last_payload["questions"]
+    for question in questions.values():
+        strings = [question["instructions"], *question["criteria"].values()]
+        for text in strings:
+            offenders = sorted(french & set(text.lower()))
+            assert not offenders, f"French text in the Jev payload: {offenders} in {text!r}"
+
+
 def test_context_window_is_bounded(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     transport = StubTransport([StubResponse(decision_payload())])

@@ -16,12 +16,21 @@ before/after measurement is recorded in the changelog.
 
 | # | Model id (option prefix) | Profile line sent to Jev | Context | Benchmark evidence |
 |---|---|---|---|---|
-| 1 | `deepseek-v4.1-flash` | generalist, excellent value for money, 1M context, the default choice | 1M | Terminal-Bench near paid flagships; young model (Sep 2026), watch in production |
-| 2 | `kimi-k3` | top-tier code and agentic work, expensive, reserve it for complex development tasks | 1M | best open-weight on SWE-bench and GPQA across independent benches |
-| 3 | `glm-5.3` | deep scientific and logical reasoning, expensive, for tasks with high analytical demands | — | GPQA Diamond 91.7 |
-| 4 | `glm-5.3-flash` | fast and economical, excellent in real use for everyday tasks | — | highest measured Intelligence Index among flash models in real usage (41.8) |
-| 5 | `minimax-m3` | good speed/agentic trade-off for tool calling and sequential actions | — | 210 tok/s, good agentic score |
-| 6 | `nemotron-3-nano:30b` | very high throughput, simple tasks only, avoid it for reasoning | — | 346 TPS; avoid for reasoning |
+| 1 | `deepseek-v4.1-flash` | the usual choice for general work: everyday writing, explanation, summarising, ordinary coding and tool use; 1M context; cheap for its size | 1M | Terminal-Bench near paid flagships; young model (Sep 2026), watch in production |
+| 2 | `kimi-k3` | strongest at complex code and long agentic tasks: multi-file refactors, deep debugging, large repositories; slow and the most expensive | 1M | best open-weight on SWE-bench and GPQA across independent benches |
+| 3 | `glm-5.3` | strongest at rigorous reasoning: mathematics, logic, science, quantitative and financial analysis, where a wrong answer is costly | — | GPQA Diamond 91.7 |
+| 4 | `glm-5.3-flash` | best reasoning-per-cost on large text: drafting, summarising, translating and structured extraction over long documents; fast | — | highest measured Intelligence Index among flash models in real usage (41.8) |
+| 5 | `minimax-m3` | fast tool calling: long sequences of API/CLI actions, repetitive automation, high throughput | — | 210 tok/s, good agentic score |
+| 6 | `nemotron-3-nano:30b` | highest throughput and lowest cost: trivial single-step requests only; weak at reasoning and at long context | — | 346 TPS; avoid for reasoning |
+
+**A profile line must name a task family, never praise the model in the abstract.** The two rules a
+rewrite has to keep: no superlative with no task attached ("excellent value for money", "excellent in
+real use for everyday tasks") and no cost adjective standing in for a task ("fast and economical"). A
+line like that is a safe pick on *every* prompt, so the model carrying one swallows decisions that
+belong to the others — the mechanism that kept `glm-5.3` and `glm-5.3-flash` off the route until the
+grid was rewritten to name task families. `tests/test_grid.py::test_no_profile_is_a_task_free_superlative`
+enforces it. Cost and speed may appear as a secondary clause, always beside the task the model is for;
+pricing belongs in this file, not in the criterion text.
 
 **The id here is the wire id, verbatim — tag included.** The tier was written as
 `nemotron-3-nano` while the provider's catalog names it `nemotron-3-nano:30b`; the bare name
@@ -75,3 +84,35 @@ Rules that follow from the table:
 This table is the record of what has been verified. A family added later gets its row filled in from a
 live probe before it joins the grid; until then the generic clamp applies and the audit record marks the
 effort as `clamped`.
+
+## Levers left, in the order they are worth trying
+
+Measured findings and the order of expected return, so the next pass does not re-derive them.
+
+1. **The confidence threshold is the second-order cause of an unused model.** A model can win the
+   decision and still never serve a turn: below the 0.5 threshold the answer is discarded and the
+   configured fallback model is applied instead. On the pre-rewrite grid, 3 of the 8 task families sat
+   at mean confidence 0.40-0.42 and were degraded 5/5 — the grid was deciding and the threshold was
+   throwing it away. A per-task threshold, or a threshold that only applies when the leading
+   probability is not a clear margin over the runner-up, recovers those turns without loosening
+   anything on the tasks that are already confident. Use `grid_coverage.below_threshold` in `status`
+   to see how often it fires before changing the number.
+2. **Effort can depend on the chosen model, but the endpoint cannot do it.** The two questions are
+   evaluated independently and in parallel, so a `high` effort answer reaches a model chosen for
+   throughput. Coupling them in code — asking for the effort *after* the model is known, or mapping
+   `(model, effort)` through the per-family table instead of only clamping the level — is a behaviour
+   change that needs its own measurement. There is no evidence yet that it pays.
+3. **`route_per_turn: false` (once per session) is the wrong default for a mixed session.** A session
+   that opens with a greeting and then asks for a refactor is served by one model the whole way. Routing
+   per turn is the default because of this; the cost is one decision call per user turn, at p50 0.27 s.
+4. **Do not add models, and do not reorder the grid, without a measurement.** Every extra option
+   measurably dilutes a Choice decision, and the first-listed option has an advantage that is visible
+   in the numbers (the generalist holds its position partly through wording, not only through fit).
+   Both were measured here; changing either without re-running the 8-task × 5-call protocol makes the
+   effect unattributable.
+5. **Re-measure after any provider-side change.** Two independent sources of drift: the model ids
+   themselves (`nemotron-3-nano` → `nemotron-3-nano:30b`) and the decision model's own calibration
+   (`jev_model` pinned to `typesafe/jev-1.13` for exactly this reason). The measurement script pattern
+   is: import the plugin package through `importlib`, swap the criterion text, POST to the live
+   endpoint with the profile's key, 5 calls per task family, then compare chosen model, mean
+   confidence and calls above the threshold.

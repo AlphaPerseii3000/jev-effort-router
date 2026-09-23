@@ -4,8 +4,6 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
 ## [0.2.0] - 2026-09-23
 
 ### Changed
@@ -39,38 +37,79 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   Zürich→London 7.1-second benchmark, which sold speed rather than the capability this plugin is alone in
   offering.
 
-## [0.1.1] - 2026-09-23
+## [Unreleased]
 
 ### Changed
 
-- **The grid profiles are now English, which is a change of payload and therefore of behaviour.**
-  The six criterion strings in `DEFAULT_GRID` are sent to Jev verbatim and are what it weighs; they
-  were French, they are now English (`grid.py`, mirrored in `README.md`, `docs/routing-grid.md`,
-  `docs/jev-decisions-api.md` and `tests/test_grid.py`). The ids, the order and the six-entry count are
-  untouched, and the docstrings now say the criteria are sent in English and that rewording them is a
-  behaviour change rather than an editorial one.
-- Measured against the live endpoint, 4 calls per task before and 4 after (16 calls per variant, the
-  decision is not deterministic so one call proves nothing):
+- **The six grid profiles were rewritten to name task families, and the two questions are now
+  English. This is a change of payload and therefore of behaviour.** `glm-5.3` and `glm-5.3-flash`
+  were almost never chosen. The cause was the criterion text, not the models: `glm-5.3-flash` was
+  described as *"fast and economical, excellent in real use for everyday tasks"* and `glm-5.3` as
+  *"deep scientific and logical reasoning, expensive, for tasks with high analytical demands"*,
+  while `deepseek-v4.1-flash` was *"generalist, excellent value for money, 1M context, the default
+  choice"*. A superlative with no task attached reads as a safe pick on **every** prompt, and
+  "*excellent in real use for everyday tasks*" describes nearly every request a user makes — so
+  `glm-5.3-flash` competed with the generalist for ordinary work and lost, while `glm-5.3` was
+  reserved for "high analytical demands" and never fired on an ordinary analysis.
+  Every profile now names the task family it is for (`glm-5.3-flash` → *"best reasoning-per-cost on
+  large text: drafting, summarising, translating and structured extraction over long documents"*,
+  `glm-5.3` → *"strongest at rigorous reasoning: mathematics, logic, science, quantitative and
+  financial analysis, where a wrong answer is costly"*), the model instructions ask Jev to compare
+  every option on the same axes (task, cost, speed) instead of leaving cost adjectives to break ties,
+  and the two question instructions and the three effort criteria move from French to English so the
+  whole payload is stated in one language. Ids, order and the six-entry count are untouched;
+  `tests/test_grid.py::test_no_profile_is_a_task_free_superlative` now fails a profile that praises
+  a model without naming a task.
+- Measured against the live endpoint, 5 calls × 8 task families = 40 calls per variant (the decision
+  is not deterministic, so one call proves nothing). Applied model = the choice after the 0.5
+  confidence threshold and the configured fallback, i.e. what actually serves the turn.
 
-  | Task | Chosen model, French → English | Mean confidence | Calls at/above the 0.5 threshold |
-  |---|---|---|---|
-  | trivial (`2+2`) | `glm-5.3-flash` → `glm-5.3-flash` | 0.477 → 0.350 | 1/4 → 0/4 |
-  | code refactor | `kimi-k3` → `kimi-k3` | 0.520 → 0.550 | 3/4 → 4/4 |
-  | demanding analysis | `glm-5.3` → `glm-5.3` | 0.893 → 0.893 | 4/4 → 4/4 |
-  | sequential tool calling | `minimax-m3` → `minimax-m3` | 0.962 → 0.980 | 4/4 → 4/4 |
+  | Task family | Before: chosen → applied | After: chosen → applied |
+  |---|---|---|
+  | trivial (`2+2`-class) | `glm-5.3-flash` 0.40 → **fallback** (0/5 confident) | `nemotron-3-nano:30b` 0.92 → `nemotron-3-nano:30b` (5/5) |
+  | everyday ERP entry | `minimax-m3` 0.69 → `minimax-m3` | `minimax-m3` 0.62 → `minimax-m3` |
+  | code refactor | `kimi-k3` 0.64 → `kimi-k3` | `kimi-k3` 0.64 → `kimi-k3` |
+  | hard debugging | `deepseek-v4.1-flash` 0.42 → **fallback** (0/5) | `kimi-k3` 0.39 → **fallback** (0/5) |
+  | demanding analysis | `glm-5.3` **1/5**, else `deepseek-v4.1-flash`, 0.40 → **fallback** | `glm-5.3` **5/5**, 0.95 → `glm-5.3` |
+  | long-text extraction | `deepseek-v4.1-flash` 0.90 → `deepseek-v4.1-flash` | `glm-5.3-flash` **5/5**, 0.98 → `glm-5.3-flash` |
+  | sequential tool calling | `minimax-m3` 0.90 → `minimax-m3` | `minimax-m3` 0.96 → `minimax-m3` |
+  | web/design copy | `deepseek-v4.1-flash` 0.91 → `deepseek-v4.1-flash` | `deepseek-v4.1-flash` 0.61 → `deepseek-v4.1-flash` |
 
-  All 16 choices are identical between the two variants: discrimination between the four task
-  categories is unchanged. The only material difference is confidence on the trivial task, which drops
-  from ~0.48 to ~0.35 — further below the 0.5 threshold than it already was. That task was already
-  degraded in 3 of 4 French calls, so the applied model (the configured default, option 1
-  `deepseek-v4.1-flash`) is unchanged in practice; but the English wording makes the tie between
-  `glm-5.3-flash` and `nemotron-3-nano:30b` for a trivial prompt slightly harder to break (0.46/0.36
-  versus 0.56/0.31). One task × 4 calls is thin evidence: this measures the mechanism and one
-  category-level regression in confidence, not a general quality verdict.
+  Aggregate over the 40 calls: `glm-5.3` 5 → 5 and `glm-5.3-flash` 5 → 5 (each was 1 or 0 before, on
+  a distribution that scattered across four models with mean confidence ~0.40 and 0/5 above the
+  threshold on the two tasks they now win 5/5); mean model confidence 0.658 → 0.749; calls above the
+  0.5 threshold 25/40 → 30/40. The generalist is untouched where it should be — it still takes
+  ordinary writing and web copy — and two previously degraded-and-scattered tasks now route
+  confidently. Median decision latency 311 ms in both variants.
+- The English-instruction change alone was measured separately first (40 calls): it moved
+  `analysis` from `glm-5.3` 1/5 to `deepseek-v4.1-flash` 5/5 at 0.50 — i.e. it removed the only GLM
+  signal without adding another. It is the grid rewrite that produces the effect; the instructions
+  change rides along for consistency of payload language and is not claimed as a gain.
+- A control run with two differently-worded variants of the first profile (with/without "the usual
+  choice", and "cheap for its size" vs "cheapest of the full-size models") confirmed the effect does
+  not depend on that phrase: 40 calls each, identical distributions on 7 of 8 task families, and the
+  design prompt at 0.61/0.63 (applied, routed) versus 0.45/0.47 (below threshold, degraded to the
+  fallback). The phrase is kept for the generalist, deliberately, so a plain writing turn does not
+  fall through to the fallback.
+- Evidence quality: 120 live calls across five variants. This measures the mechanism and the
+  before/after route distribution; it is not a quality benchmark of the models themselves, and the
+  0.95+ confidences on the two GLM tasks are high enough to re-check after any future edit to the
+  grid or the instructions.
+
+### Added
+
+- `jev_effort_router_status` now reports `grid_coverage` over the last 200 routed turns: what each
+  model was actually **applied** to, which grid entries are **never_chosen**, and which ones Jev picks
+  but the confidence threshold then throws away (`below_threshold`). This is the finding that was
+  invisible before: a model can be right for the job, present in the provider's catalog and cheap,
+  and still never serve a turn — and no single turn shows it. Only first-call records are counted, so
+  a turn that replays one decision across a long tool loop is not weighted as if it had decided many
+  times. Applied against the real audit trail of this profile, the report names `glm-5.3` under
+  `never_chosen` and `glm-5.3-flash` under `below_threshold` — exactly the symptom.
 
 ### Fixed
 
-- `jev_router_status` and `jev_router_route` now accept the arguments dict the host's tool registry
+- `jev_effort_router_status` and `jev_effort_router_route` now accept the arguments dict the host's tool registry
   passes positionally (`handler(args, **context)`). Both were declared `handler(recent=5)` /
   `handler(task="", context="")`, so the arguments dict was bound to the first parameter and every
   call that carried a parameter failed with
@@ -102,7 +141,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   put on the wire. A model the catalog proves absent is refused: the turn keeps the configured model
   and the refusal is recorded as `model_not_in_provider_catalog` with the model Jev picked. No
   catalog evidence (absent/unreadable/unexpected) means "no verdict" and routing proceeds as before.
-  `jev_router_status` reports offending grid entries under `grid_unavailable`.
+  `jev_effort_router_status` reports offending grid entries under `grid_unavailable`.
 
 ## [0.1.0] - 2026-09-22
 
@@ -126,9 +165,10 @@ First release.
 - Fail-open on every path: timeout, HTTP error, malformed answer, low confidence, off-grid model, unknown
   provider or API mode all leave the request byte-identical to a plugin-disabled run.
 - Operator surfaces: `/jev-router` slash command, `hermes jev-router` CLI family (`status`, `route`,
-  `grid`, `tail`, `reset`), and the `jev_router_status` / `jev_router_route` agent tools.
+  `grid`, `tail`, `reset`), and the `jev_effort_router_status` / `jev_effort_router_route` agent tools.
 - 74 tests, driving the real middleware callback against a stub Decisions API with no network access.
 
 [0.2.0]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.2.0
 [0.1.1]: https://github.com/AlphaPerseii3000/jev-router/releases/tag/v0.1.1
 [0.1.0]: https://github.com/AlphaPerseii3000/jev-router/releases/tag/v0.1.0
+[0.2.0]: https://github.com/AlphaPerseii3000/jev-router/releases/tag/v0.2.0
