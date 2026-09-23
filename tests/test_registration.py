@@ -260,6 +260,52 @@ def test_slash_command_status_grid_and_usage(plugin, tmp_path, monkeypatch):
     assert "Usage" in handler("nonsense")
 
 
+def test_cli_status_shows_the_grid_coverage_block(tmp_path, monkeypatch, capsys):
+    """The text surface has to carry the finding, not only the tool's JSON.
+
+    `hermes jev-effort-router status` is what an operator actually reads; a report that only
+    exists in the agent tool would leave the under-use invisible from the shell.
+    """
+    from commands import _status_text
+    from config import load_settings
+    import importlib.util
+    import json
+    import sys
+
+    name = "jev_effort_router_coverage_cli_test"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(
+            name, ROOT / "__init__.py", submodule_search_locations=[str(ROOT)]
+        )
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    ctx = StubContext(config={}, state=StubState(tmp_path))
+    sys.modules[name].register(ctx)
+    router = ctx.middleware["llm_request"].__self__
+
+    path = tmp_path / "routes.jsonl"
+    path.write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {"event": "route", "model": "deepseek-v4.1-flash", "replayed": False,
+                 "fallback_reasons": [], "model_probabilities": {}},
+                {"event": "route", "model": "deepseek-v4.1-flash", "replayed": False,
+                 "fallback_reasons": ["low_confidence"], "model_probabilities": {"3": 0.44, "1": 0.30}},
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    text = _status_text(router, load_settings(lambda _key, default=None: default))
+
+    assert "Grid coverage (last 2 routed turns):" in text
+    assert "deepseek-v4.1-flash x1" in text
+    assert "glm-5.3" in text.split("never chosen:")[1].split("\n")[0] + text.split("picked, below threshold:")[1]
+
+
 def test_cli_command_status_and_missing_task(plugin, tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     ctx = StubContext(config={}, state=StubState(tmp_path))

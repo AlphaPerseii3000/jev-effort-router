@@ -106,8 +106,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   a turn that replays one decision across a long tool loop is not weighted as if it had decided many
   times. Applied against the real audit trail of this profile, the report names `glm-5.3` under
   `never_chosen` and `glm-5.3-flash` under `below_threshold` — exactly the symptom.
+- The same block is rendered on the **text** surfaces (`hermes jev-effort-router status` and the
+  `/jev-effort-router status` slash command), not only in the agent tool's JSON: the shell is where an
+  operator reads routing state, and a finding that only exists in the tool would stay invisible there.
 
 ### Fixed
+
+- The **audit trail restarts** after the `jev-router` → `jev-effort-router` rename: the plugin data
+  directory is namespaced by the plugin id *and* a content hash, so the new id opened a new empty
+  `routes.jsonl` next to the 880-record history of the old one. `grid_coverage` therefore reports a
+  window of a handful of turns until the new trail fills. The old directory is left in place and is
+  the source of truth for the pre-rename history.
 
 - `jev_effort_router_status` and `jev_effort_router_route` now accept the arguments dict the host's tool registry
   passes positionally (`handler(args, **context)`). Both were declared `handler(recent=5)` /

@@ -54,6 +54,10 @@ def _status_text(router, settings: Settings, recent: int = 5) -> str:
             "  ⚠ not in the provider's catalog (a decision naming one of these is refused): "
             + ", ".join(payload["grid_unavailable"])
         )
+    coverage = payload.get("grid_coverage")
+    if coverage:
+        lines.append("")
+        lines.extend(_coverage_text(coverage))
     records = payload.get("recent") or []
     lines.append("")
     if not records:
@@ -87,6 +91,35 @@ def _status_text(router, settings: Settings, recent: int = 5) -> str:
                     )
                 )
     return "\n".join(lines)
+
+
+def _coverage_text(coverage: dict) -> list:
+    """The grid-coverage block: what is being applied, and what is being lost.
+
+    Two different findings, because the fixes differ: a model under ``never chosen`` needs its
+    criterion rewritten, a model under ``picked, below threshold`` needs the criterion or the
+    threshold revisited. Only first-call records are counted, so a long tool loop does not weight
+    the turn it replays.
+    """
+    lines = [f"Grid coverage (last {coverage.get('window', 0)} routed turns):"]
+    applied = coverage.get("applied") or {}
+    if applied:
+        ranked = sorted(applied.items(), key=lambda item: item[1], reverse=True)
+        lines.append("  applied:        " + ", ".join(f"{model} x{count}" for model, count in ranked))
+    else:
+        lines.append("  applied:        none")
+    never = coverage.get("never_chosen") or []
+    if never:
+        lines.append("  never chosen:   " + ", ".join(never) + "   ← Jev never picks these on this workload")
+    below = coverage.get("below_threshold") or {}
+    if below:
+        ranked = sorted(below.items(), key=lambda item: item[1], reverse=True)
+        lines.append(
+            "  picked, below threshold: "
+            + ", ".join(f"{model} x{count}" for model, count in ranked)
+            + "   ← discarded, served by the fallback"
+        )
+    return lines
 
 
 def _route_text(router, settings: Settings, task: str) -> str:
