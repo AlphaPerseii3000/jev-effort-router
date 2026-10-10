@@ -9,10 +9,11 @@ only adds coercion, validation and the "value is missing or nonsense" backstops.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from dataclasses import dataclass, field, fields
+from types import MappingProxyType
+from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
 
-from .grid import DEFAULT_GRID, Entry, parse_grid
+from .grid import DEFAULT_GRID, Entry, parse_grid, parse_grid_strict
 
 #: Provider profile this router is benchmarked for. Anything else is skipped untouched.
 ROUTED_PROVIDER = "ollama-cloud"
@@ -83,6 +84,92 @@ def _as_text(value: Any, default: str) -> str:
     return text or default
 
 
+def _as_optional_bool(value: Any) -> Optional[bool]:
+    """Coerce to a bool, or ``None`` when the value is absent or unreadable.
+
+    ``None`` is the "inherit the global setting" sentinel, so it has to stay distinguishable
+    from a parsed ``False``.
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"1", "true", "yes", "on"}:
+            return True
+        if lowered in {"0", "false", "no", "off"}:
+            return False
+        return None
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return None
+
+
+def _as_optional_float(value: Any, *, minimum: Optional[float] = None) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        result = float(value)
+    except (TypeError, ValueError):
+        return None
+    if result != result:  # NaN
+        return None
+    if minimum is not None and result < minimum:
+        return None
+    return result
+
+
+def _as_optional_choice(value: Any, allowed: Sequence[str]) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip().lower()
+    return text if text in allowed else None
+
+
+def _entry_for(grid: Tuple[Entry, ...], model_id: str) -> Optional[Entry]:
+    """The grid entry whose model id is ``model_id``, or ``None``."""
+    wanted = (model_id or "").strip()
+    for entry in grid:
+        if entry.model_id == wanted:
+            return entry
+    return None
+
+
+@dataclass(frozen=True)
+class PlatformPolicy:
+    """One surface's routing policy, as declared under ``platform_overrides``.
+
+    Every field is optional and ``None`` means "inherit the global setting", deliberately
+    distinct from a parsed ``False``/``0.0``. ``grid`` is ``None`` unless a policy grid both
+    was declared and parsed; the resolved grid then falls to the effective global one.
+    """
+
+    enabled: Optional[bool] = None
+    grid: Optional[Tuple[Entry, ...]] = None
+    confidence_threshold: Optional[float] = None
+    max_effort: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class EffectiveSettings:
+    """The frozen per-request snapshot the decision path consumes.
+
+    Built once per request from the global :class:`Settings` and, when a surface has one, its
+    :class:`PlatformPolicy`. A policy field overrides the global value; everything else is the
+    global setting unchanged.
+    """
+
+    grid: Tuple[Entry, ...] = field(default_factory=lambda: tuple(DEFAULT_GRID))
+    confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
+    default_model: str = DEFAULT_MODEL
+    default_effort: str = DEFAULT_EFFORT
+    max_effort: Optional[str] = None
+
+    def entry_for(self, model_id: str) -> Optional[Entry]:
+        return _entry_for(self.grid, model_id)
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable snapshot of the plugin's effective settings."""
@@ -100,17 +187,98 @@ class Settings:
     log_skips: bool = True
     include_user_message_in_audit: bool = False
     grid: Tuple[Entry, ...] = field(default_factory=lambda: tuple(DEFAULT_GRID))
+    #: A read-only mapping, so the frozen snapshot cannot be mutated through the field.
+    platform_overrides: Mapping[str, PlatformPolicy] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+
+    def __hash__(self) -> int:
+        """Hash the snapshot, treating the read-only mapping as its frozenset of items.
+
+        A frozen dataclass hashes its fields by default, but ``MappingProxyType`` is hashable
+        only from Python 3.12 — and this plugin's matrix includes 3.11, where the default
+        would make ``Settings`` unhashable. Hashing the mapping's items keeps the snapshot
+        hashable on every supported interpreter without making it mutable.
+        """
+        parts = []
+        for spec in fields(self):
+            value = getattr(self, spec.name)
+            if spec.name == "platform_overrides":
+                value = frozenset(value.items())
+            parts.append((spec.name, value))
+        return hash(tuple(parts))
 
     @property
     def grid_ids(self) -> Tuple[str, ...]:
         return tuple(entry.model_id for entry in self.grid)
 
     def entry_for(self, model_id: str) -> Optional[Entry]:
-        wanted = (model_id or "").strip()
-        for entry in self.grid:
-            if entry.model_id == wanted:
-                return entry
-        return None
+        return _entry_for(self.grid, model_id)
+
+    def policy_for(self, platform: str) -> Optional[PlatformPolicy]:
+        """The policy declared for ``platform``, or ``None`` when it is unlisted."""
+        key = (platform or "").strip().lower()
+        return self.platform_overrides.get(key)
+
+    def effective(self, policy: Optional[PlatformPolicy]) -> EffectiveSettings:
+        """Resolve one frozen snapshot, applying ``policy`` over the global settings.
+
+        A policy field of ``None`` inherits the global value; a policy ``grid`` that did not
+        parse also inherits, so a bad policy grid never replaces the operator's global grid.
+        """
+        grid = policy.grid if policy is not None and policy.grid is not None else self.grid
+        threshold = self.confidence_threshold
+        if policy is not None and policy.confidence_threshold is not None:
+            threshold = policy.confidence_threshold
+        return EffectiveSettings(
+            grid=grid,
+            confidence_threshold=threshold,
+            default_model=self.default_model,
+            default_effort=self.default_effort,
+            max_effort=policy.max_effort if policy is not None else None,
+        )
+
+
+def parse_platform_overrides(raw: Any) -> Mapping[str, PlatformPolicy]:
+    """Parse ``platform_overrides`` into frozen per-platform policies.
+
+    An entry is kept only when its value is a mapping with at least one recognised key that
+    parsed. Anything else — a non-map value, an unknown key, or a value that does not coerce —
+    is dropped outright, so "unusable" and "unparseable grid alone" are observably the same
+    thing: no policy, the global settings in force. Never raises.
+
+    Returns a read-only ``MappingProxyType``: ``Settings`` is frozen, so the mapping it carries
+    must be too, or the snapshot is silently mutable through the field.
+    """
+    if not isinstance(raw, dict):
+        return MappingProxyType({})
+
+    policies: Dict[str, PlatformPolicy] = {}
+    for key, value in raw.items():
+        platform = str(key or "").strip().lower()
+        if not platform or not isinstance(value, dict):
+            continue
+
+        enabled = _as_optional_bool(value["enabled"]) if "enabled" in value else None
+        threshold = (
+            _as_optional_float(value["confidence_threshold"], minimum=0.0)
+            if "confidence_threshold" in value
+            else None
+        )
+        max_effort = (
+            _as_optional_choice(value["max_effort"], EFFORT_LEVELS) if "max_effort" in value else None
+        )
+        grid = parse_grid_strict(value["grid"]) if "grid" in value else None
+
+        if enabled is None and threshold is None and max_effort is None and grid is None:
+            continue
+        policies[platform] = PlatformPolicy(
+            enabled=enabled,
+            grid=grid,
+            confidence_threshold=threshold,
+            max_effort=max_effort,
+        )
+    return MappingProxyType(policies)
 
 
 def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
@@ -140,6 +308,7 @@ def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
         log_skips=_as_bool(read("log_skips", True), True),
         include_user_message_in_audit=_as_bool(read("include_user_message_in_audit", False), False),
         grid=grid,
+        platform_overrides=parse_platform_overrides(read("platform_overrides", None)),
     )
     return settings
 

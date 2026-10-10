@@ -379,6 +379,37 @@ def test_disabled_switch_is_inert(tmp_path):
     assert transport.call_count == 0
 
 
+def test_a_surface_disabled_by_its_policy_is_skipped_naming_the_surface(tmp_path):
+    transport = StubTransport([])
+    router, _ = build(tmp_path, transport, config={"platform_overrides": {"cron": {"enabled": False}}})
+
+    assert route(router, ollama_request(), platform="cron") is None
+    assert transport.call_count == 0
+
+    records = (tmp_path / "routes.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(records) == 1
+    record = json.loads(records[0])
+    assert record["event"] == "skip"
+    assert record["reason"] == "surface_disabled"
+    assert record["platform"] == "cron"
+
+
+def test_the_policy_is_per_surface(tmp_path):
+    transport = StubTransport([StubResponse(decision_payload("1", 0.9))])
+    router, _ = build(
+        tmp_path,
+        transport,
+        config={"platform_overrides": {"cron": {"enabled": False}}},
+    )
+
+    # A cli turn on the same router still routes; only the cron surface is disabled.
+    result = route(router, ollama_request(), platform="cli")
+
+    assert result is not None
+    assert result["request"]["model"] == "deepseek-v4.1-flash"
+    assert transport.call_count == 1
+
+
 def test_a_turn_without_a_user_message_is_skipped(tmp_path):
     transport = StubTransport([])
     router, _ = build(tmp_path, transport)

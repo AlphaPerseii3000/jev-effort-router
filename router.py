@@ -25,6 +25,7 @@ from .client import (
     REASON_SKIPPED_NO_MESSAGE,
     REASON_SKIPPED_PROVIDER,
     REASON_SKIPPED_UNKNOWN_MODEL,
+    REASON_SURFACE_DISABLED,
     REASON_USER_DATA,
     Decision,
     JevClient,
@@ -129,7 +130,19 @@ class Router:
         if api_mode and api_mode not in ROUTED_API_MODES:
             self._record_skip(settings, REASON_SKIPPED_API_MODE, where, extra={"api_mode": api_mode})
             return None
-        if settings.entry_for(model) is None:
+
+        # -- per-surface policy: resolved once per request ---------------------------
+        # Absent, null or an unlisted platform leaves ``policy`` None and ``effective`` equal
+        # to the global settings, so the gates below behave exactly as before the key existed.
+        policy = settings.policy_for(platform)
+        if policy is not None and policy.enabled is False:
+            self._record_skip(settings, REASON_SURFACE_DISABLED, where)
+            return None
+        effective = settings.effective(policy)
+
+        # A surface's grid is a structural cap: a configured model outside it degrades to a
+        # skip that keeps that configured model on the wire, rather than being re-pinned.
+        if effective.entry_for(model) is None:
             self._record_skip(settings, REASON_SKIPPED_MODEL, where)
             return None
         if not isinstance(request, dict) or not isinstance(original_request, dict):
