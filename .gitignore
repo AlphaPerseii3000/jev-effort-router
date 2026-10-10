@@ -24,3 +24,11 @@ htmlcov/
 # Local runtime artefacts (runtime data lives under HERMES_HOME/plugin-data/)
 routes.jsonl
 *.jsonl.tmp
+
+# BMad Method — local agent tooling and planning workspace, never published
+_bmad/
+_bmad-output/
+.agents/
+.claude/skills/
+.hermes/
+skills-lock.json

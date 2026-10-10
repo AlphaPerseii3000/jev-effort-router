@@ -95,21 +95,17 @@ def parse_entry(raw: Any) -> Optional[Entry]:
     return Entry(model_id, description.strip() if separator else "")
 
 
-def parse_grid(raw: Any) -> Tuple[Entry, ...]:
-    """Resolve the effective grid, falling back to :data:`DEFAULT_GRID` on nonsense input.
-
-    A partial or unparseable override is not a reason to route blindly: entries that do not
-    parse are dropped, and an override that yields nothing at all falls back to the default.
-    """
+def _parse_entries(raw: Any) -> List[Entry]:
+    """The lenient entry list: drop unparseable items and duplicate ids, never fall back."""
     if raw is None:
-        return DEFAULT_GRID
+        return []
     items: Iterable[Any]
     if isinstance(raw, str):
         items = [line for line in raw.splitlines() if line.strip()]
     elif isinstance(raw, Sequence):
         items = raw
     else:
-        return DEFAULT_GRID
+        return []
 
     parsed: List[Entry] = []
     seen = set()
@@ -119,7 +115,40 @@ def parse_grid(raw: Any) -> Tuple[Entry, ...]:
             continue
         seen.add(entry.model_id)
         parsed.append(entry)
-    return tuple(parsed) if parsed else DEFAULT_GRID
+    return parsed
+
+
+def _looks_like_model_id(text: str) -> bool:
+    """Whether ``text`` is a plausible model id (at least one alphanumeric character).
+
+    ``parse_entry`` accepts any non-empty string as a bare model id, which is right for the
+    lenient global-grid path. A per-surface policy has to tell a real bare id (``kimi-k3``)
+    from nonsense (``"???"``), so strict parsing keeps only ids that could go on the wire.
+    """
+    return any(character.isalnum() for character in text)
+
+
+def parse_grid(raw: Any, fallback: Tuple[Entry, ...] = DEFAULT_GRID) -> Tuple[Entry, ...]:
+    """Resolve the effective grid, falling back to ``fallback`` on nonsense input.
+
+    A partial or unparseable override is not a reason to route blindly: entries that do not
+    parse are dropped, and an override that yields nothing at all falls back to ``fallback``
+    (the built-in :data:`DEFAULT_GRID` unless a caller says otherwise).
+    """
+    parsed = _parse_entries(raw)
+    return tuple(parsed) if parsed else fallback
+
+
+def parse_grid_strict(raw: Any) -> Optional[Tuple[Entry, ...]]:
+    """Parse a grid override, or ``None`` when nothing usable parsed.
+
+    Stricter than :func:`parse_grid` two ways: an entry whose id is not a plausible model id
+    is dropped, and an override that yields nothing at all is ``None`` rather than a fallback —
+    which is what lets a per-surface policy keep the operator's global grid instead of the
+    built-in six when its own grid is bad.
+    """
+    parsed = [entry for entry in _parse_entries(raw) if _looks_like_model_id(entry.model_id)]
+    return tuple(parsed) if parsed else None
 
 
 def criteria(grid: Sequence[Entry]) -> dict:

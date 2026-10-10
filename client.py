@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 #: Reasons a turn was left unrouted. Stable strings — they are what the audit file records.
 REASON_DISABLED = "disabled"
+REASON_SURFACE_DISABLED = "surface_disabled"
 REASON_NO_API_KEY = "no_api_key"
 REASON_SKIPPED_PROVIDER = "provider_not_routed"
 REASON_SKIPPED_API_MODE = "api_mode_not_routed"

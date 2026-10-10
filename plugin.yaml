@@ -90,3 +90,8 @@ config_schema:
     default: null
     label: Routing grid override
     description: 'Optional list of entries, each "model-id: description", replacing the built-in six-model grid.'
+  platform_overrides:
+    type: dict
+    default: null
+    label: Per-surface routing policy
+    description: 'Optional map of platform (cron, telegram, cli, ...) to the settings it overrides, in precedence order enabled, grid, confidence_threshold, max_effort. Absent, null or an unlisted platform reproduces the global settings exactly; enabled: false leaves that surface''s turns untouched.'
