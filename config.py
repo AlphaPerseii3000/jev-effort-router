@@ -36,54 +36,6 @@ DEFAULT_EFFORT = "medium"
 DEFAULT_CONTEXT_TURNS = 4
 
 
-def _as_bool(value: Any, default: bool) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        lowered = value.strip().lower()
-        if lowered in {"1", "true", "yes", "on"}:
-            return True
-        if lowered in {"0", "false", "no", "off"}:
-            return False
-    if isinstance(value, (int, float)):
-        return bool(value)
-    return default
-
-
-def _as_float(value: Any, default: float, *, minimum: Optional[float] = None) -> float:
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return default
-    if result != result:  # NaN
-        return default
-    if minimum is not None and result < minimum:
-        return default
-    return result
-
-
-def _as_int(value: Any, default: int, *, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
-    try:
-        result = int(value)
-    except (TypeError, ValueError):
-        return default
-    if minimum is not None and result < minimum:
-        return default
-    if maximum is not None and result > maximum:
-        return maximum
-    return result
-
-
-def _as_choice(value: Any, allowed: Sequence[str], default: str) -> str:
-    text = str(value or "").strip().lower()
-    return text if text in allowed else default
-
-
-def _as_text(value: Any, default: str) -> str:
-    text = str(value or "").strip()
-    return text or default
-
-
 def _as_optional_bool(value: Any) -> Optional[bool]:
     """Coerce to a bool, or ``None`` when the value is absent or unreadable.
 
@@ -106,6 +58,11 @@ def _as_optional_bool(value: Any) -> Optional[bool]:
     return None
 
 
+def _as_bool(value: Any, default: bool) -> bool:
+    parsed = _as_optional_bool(value)
+    return default if parsed is None else parsed
+
+
 def _as_optional_float(value: Any, *, minimum: Optional[float] = None) -> Optional[float]:
     if value is None:
         return None
@@ -120,6 +77,23 @@ def _as_optional_float(value: Any, *, minimum: Optional[float] = None) -> Option
     return result
 
 
+def _as_float(value: Any, default: float = 0.0, *, minimum: Optional[float] = None) -> float:
+    parsed = _as_optional_float(value, minimum=minimum)
+    return default if parsed is None else parsed
+
+
+def _as_int(value: Any, default: int, *, minimum: Optional[int] = None, maximum: Optional[int] = None) -> int:
+    try:
+        result = int(value)
+    except (TypeError, ValueError):
+        return default
+    if minimum is not None and result < minimum:
+        return default
+    if maximum is not None and result > maximum:
+        return maximum
+    return result
+
+
 def _as_optional_choice(value: Any, allowed: Sequence[str]) -> Optional[str]:
     if value is None:
         return None
@@ -127,13 +101,24 @@ def _as_optional_choice(value: Any, allowed: Sequence[str]) -> Optional[str]:
     return text if text in allowed else None
 
 
-def _entry_for(grid: Tuple[Entry, ...], model_id: str) -> Optional[Entry]:
+def _as_choice(value: Any, allowed: Sequence[str], default: str) -> str:
+    parsed = _as_optional_choice(value, allowed)
+    return default if parsed is None else parsed
+
+
+def _as_text(value: Any, default: str) -> str:
+    text = str(value or "").strip()
+    return text or default
+
+
+def _entry_for(grid: Sequence[Entry], model_id: str) -> Optional[Entry]:
     """The grid entry whose model id is ``model_id``, or ``None``."""
     wanted = (model_id or "").strip()
     for entry in grid:
         if entry.model_id == wanted:
             return entry
     return None
+
 
 
 @dataclass(frozen=True)
@@ -232,17 +217,28 @@ class Settings:
         A policy field of ``None`` inherits the global value; a policy ``grid`` that did not
         parse also inherits, so a bad policy grid never replaces the operator's global grid.
         """
-        grid = policy.grid if policy is not None and policy.grid is not None else self.grid
-        threshold = self.confidence_threshold
-        if policy is not None and policy.confidence_threshold is not None:
-            threshold = policy.confidence_threshold
+        if policy is None:
+            return EffectiveSettings(
+                grid=self.grid,
+                confidence_threshold=self.confidence_threshold,
+                default_model=self.default_model,
+                default_effort=self.default_effort,
+                max_effort=None,
+                grid_from_policy=False,
+            )
+        grid = policy.grid if policy.grid is not None else self.grid
+        threshold = (
+            policy.confidence_threshold
+            if policy.confidence_threshold is not None
+            else self.confidence_threshold
+        )
         return EffectiveSettings(
             grid=grid,
             confidence_threshold=threshold,
             default_model=self.default_model,
             default_effort=self.default_effort,
-            max_effort=policy.max_effort if policy is not None else None,
-            grid_from_policy=policy is not None and policy.grid is not None,
+            max_effort=policy.max_effort,
+            grid_from_policy=policy.grid is not None,
         )
 
 

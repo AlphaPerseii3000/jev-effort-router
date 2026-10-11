@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .config import EFFORT_LEVELS, EffectiveSettings, Settings, api_key, redact
+from .config import EFFORT_LEVELS, EffectiveSettings, Settings, _as_float, api_key, redact
 from .effort import resolve_effort
 from .grid import Entry, resolve
 from .state import (
@@ -65,14 +65,6 @@ class Decision:
         return bool(self.fallback_reasons)
 
 
-def _as_float(value: Any, default: float = 0.0) -> float:
-    try:
-        result = float(value)
-    except (TypeError, ValueError):
-        return default
-    return result if result == result else default
-
-
 #: Narrower than :data:`effort.LADDER`: the policy vocabulary is Jev's three rungs, so a cap
 #: never has to reason about ``none``/``max`` (which the plugin never routes to).
 _EFFORT_ORDER = {level: index for index, level in enumerate(EFFORT_LEVELS)}
@@ -89,6 +81,21 @@ def _cap_effort(level: Optional[str], cap: Optional[str]) -> Optional[str]:
     if level not in _EFFORT_ORDER or cap not in _EFFORT_ORDER:
         return level
     return level if _EFFORT_ORDER[level] <= _EFFORT_ORDER[cap] else cap
+
+
+def _fallback_model(effective: EffectiveSettings) -> str:
+    """Resolve the fallback model when Jev's answer was absent, off-grid or low-confidence."""
+    chosen = effective.entry_for(effective.default_model)
+    if chosen is not None:
+        return chosen.model_id
+    if effective.grid_from_policy and effective.grid:
+        # A policy grid is a structural cap, and its fallback resolves inside it. When
+        # the operator's configured default is outside the policy grid, re-pin to the
+        # grid's first entry rather than emitting a model the surface forbids.
+        return effective.grid[0].model_id
+    # No policy grid: today's behaviour — the configured default verbatim, even
+    # when the global grid does not contain it.
+    return effective.default_model
 
 
 def _as_probabilities(raw: Any) -> Dict[str, float]:
@@ -271,21 +278,7 @@ class JevClient:
                 reasons.append(REASON_LOW_CONFIDENCE)
                 chosen = None
 
-        if chosen is None:
-            chosen = effective.entry_for(effective.default_model)
-            if chosen is not None:
-                model = chosen.model_id
-            elif effective.grid_from_policy and effective.grid:
-                # A policy grid is a structural cap, and its fallback resolves inside it. When
-                # the operator's configured default is outside the policy grid, re-pin to the
-                # grid's first entry rather than emitting a model the surface forbids.
-                model = effective.grid[0].model_id
-            else:
-                # No policy grid: today's behaviour — the configured default verbatim, even
-                # when the global grid does not contain it.
-                model = effective.default_model
-        else:
-            model = chosen.model_id
+        model = chosen.model_id if chosen is not None else _fallback_model(effective)
 
         # -- effort ----------------------------------------------------------------
         # A usable-but-distrusted effort answer (low confidence, off-vocabulary choice)
