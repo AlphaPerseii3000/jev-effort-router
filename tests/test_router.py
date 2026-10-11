@@ -502,6 +502,186 @@ def test_max_effort_caps_the_default_effort_fallback_on_a_surface(tmp_path):
     assert result["request"]["reasoning_effort"] == "low"
 
 
+
+def test_end_to_end_cron_turn_is_capped_and_cli_turn_is_not_in_one_run(tmp_path):
+    """Proves CAP-8 through one run of the real middleware callback across four turns.
+
+    1. cron turn: stub Jev answers off the cron grid at high; goes out on cron-grid model at capped effort (medium).
+    2. cli turn: in the same run, routes on the global grid (kimi-k3 at high).
+    3. disabled cron turn: cron policy with enabled: false leaves turn byte-identical to plugin-disabled run.
+    4. unmapped turn: platform absent from the map with off-grid model leaves turn byte-identical to plugin-disabled run.
+
+    Captures provider kwargs and audit records for all four turns:
+    - Never a model or effort outside the cron policy on cron turns.
+    - Exactly one skip entry naming the disabled surface (reason == 'surface_disabled', platform == 'cron').
+    - Byte-identical payloads on the disabled and unmapped surfaces.
+    """
+    transport = StubTransport(
+        [
+            StubResponse(decision_payload("3", 0.9, "high", 0.9)),  # turn 1 (cron): off-grid answer at high
+            StubResponse(decision_payload("2", 0.9, "high", 0.8)),  # turn 2 (cli): global position 2 at high
+        ]
+    )
+
+    current_config = {"platform_overrides": dict(CRON_POLICY)}
+    audit = StubState(tmp_path)
+    router = Router(
+        lambda: load_settings(lambda k, default=None: current_config.get(k, default)),
+        get_state=lambda: audit,
+        client_factory=lambda settings: _ClientWith(transport, settings),
+        catalog=_NoCatalog(),
+    )
+
+    disabled_router, _ = build(tmp_path / "disabled", StubTransport([]), config={"enabled": False})
+
+    def dispatch(r, req, **kwargs):
+        res = r.on_llm_request(req, dict(req), **kwargs)
+        return res, (res["request"] if res is not None else req)
+
+
+    # Turn 1: cron turn under CRON_POLICY (grid: glm-5.3, max_effort: medium)
+    req_cron = ollama_request(model="glm-5.3")
+    res_cron, cron_kwargs = dispatch(
+        router,
+        req_cron,
+        turn_id="turn-cron",
+        session_id="session-cron",
+        platform="cron",
+        model="glm-5.3",
+        provider="ollama-cloud",
+        base_url="https://ollama.com/v1",
+        api_mode="chat_completions",
+        api_call_count=0,
+        api_request_id="turn-cron:api:0",
+    )
+    assert res_cron is not None
+    assert cron_kwargs["model"] == "glm-5.3"
+    assert cron_kwargs["reasoning_effort"] == "medium"
+
+    # Turn 2: cli turn in the same run (routes on global grid)
+    req_cli = ollama_request(model="deepseek-v4.1-flash")
+    res_cli, cli_kwargs = dispatch(
+        router,
+        req_cli,
+        turn_id="turn-cli",
+        session_id="session-cli",
+        platform="cli",
+        model="deepseek-v4.1-flash",
+        provider="ollama-cloud",
+        base_url="https://ollama.com/v1",
+        api_mode="chat_completions",
+        api_call_count=0,
+        api_request_id="turn-cli:api:0",
+    )
+    assert res_cli is not None
+    assert cli_kwargs["model"] == "kimi-k3"
+    assert cli_kwargs["reasoning_effort"] == "high"
+
+    # Turn 3: cron policy with enabled: false
+    current_config["platform_overrides"] = {"cron": {"enabled": False}}
+    req_cron_disabled = ollama_request(model="glm-5.3")
+    res_cron_disabled, disabled_cron_kwargs = dispatch(
+        router,
+        req_cron_disabled,
+        turn_id="turn-cron-disabled",
+        session_id="session-cron-disabled",
+        platform="cron",
+        model="glm-5.3",
+        provider="ollama-cloud",
+        base_url="https://ollama.com/v1",
+        api_mode="chat_completions",
+        api_call_count=0,
+        api_request_id="turn-cron-disabled:api:0",
+    )
+    res_ref_disabled, ref_disabled_cron_kwargs = dispatch(
+        disabled_router,
+        req_cron_disabled,
+        turn_id="turn-ref-cron-disabled",
+        session_id="session-ref-cron-disabled",
+        platform="cron",
+        model="glm-5.3",
+        provider="ollama-cloud",
+        base_url="https://ollama.com/v1",
+        api_mode="chat_completions",
+        api_call_count=0,
+        api_request_id="turn-ref-cron-disabled:api:0",
+    )
+    assert res_cron_disabled is None
+    assert res_ref_disabled is None
+    assert disabled_cron_kwargs == ref_disabled_cron_kwargs == req_cron_disabled
+
+    # Turn 4: platform absent from the map with off-grid model
+    req_unmapped = ollama_request(model="gpt-9-ultra")
+    res_unmapped, unmapped_kwargs = dispatch(
+        router,
+        req_unmapped,
+        turn_id="turn-unmapped",
+        session_id="session-unmapped",
+        platform="telegram",
+        model="gpt-9-ultra",
+        provider="ollama-cloud",
+        base_url="https://ollama.com/v1",
+        api_mode="chat_completions",
+        api_call_count=0,
+        api_request_id="turn-unmapped:api:0",
+    )
+    res_ref_unmapped, ref_unmapped_kwargs = dispatch(
+        disabled_router,
+        req_unmapped,
+        turn_id="turn-ref-unmapped",
+        session_id="session-ref-unmapped",
+        platform="telegram",
+        model="gpt-9-ultra",
+        provider="ollama-cloud",
+        base_url="https://ollama.com/v1",
+        api_mode="chat_completions",
+        api_call_count=0,
+        api_request_id="turn-ref-unmapped:api:0",
+    )
+    assert res_unmapped is None
+    assert res_ref_unmapped is None
+    assert unmapped_kwargs == ref_unmapped_kwargs == req_unmapped
+
+    # Audit records check
+    lines = (tmp_path / "routes.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 4
+    records = [json.loads(line) for line in lines]
+
+    # Turn 1 audit: routed on cron grid at or below ceiling
+    assert records[0]["event"] == "route"
+    assert records[0]["platform"] == "cron"
+    assert records[0]["model"] == "glm-5.3"
+    assert records[0]["effort"] == "medium"
+
+    # Turn 2 audit: routed on global grid
+    assert records[1]["event"] == "route"
+    assert records[1]["platform"] == "cli"
+    assert records[1]["model"] == "kimi-k3"
+    assert records[1]["effort"] == "high"
+
+    # Turn 3 audit: skip entry naming the disabled surface
+    assert records[2]["event"] == "skip"
+    assert records[2]["reason"] == "surface_disabled"
+    assert records[2]["platform"] == "cron"
+
+    # Turn 4 audit: unmapped surface skipped model
+    assert records[3]["event"] == "skip"
+    assert records[3]["reason"] == "model_not_in_grid"
+    assert records[3]["platform"] == "telegram"
+
+    # Invariant: exactly one skip entry naming the disabled surface
+    disabled_skips = [r for r in records if r.get("reason") == "surface_disabled"]
+    assert len(disabled_skips) == 1
+    assert disabled_skips[0]["platform"] == "cron"
+
+    # Jev transport calls: only the two routed turns reached Jev
+    assert transport.call_count == 2
+    assert set(transport.calls[0]["json"]["questions"]["model_route"]["criteria"]) == {"1"}
+    assert set(transport.calls[1]["json"]["questions"]["model_route"]["criteria"]) == {
+        "1", "2", "3", "4", "5", "6",
+    }
+
+
 def test_a_turn_without_a_user_message_is_skipped(tmp_path):
     transport = StubTransport([])
     router, _ = build(tmp_path, transport)
