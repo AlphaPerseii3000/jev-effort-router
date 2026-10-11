@@ -150,6 +150,39 @@ form generated from `plugin.yaml`.
 | `log_skips` | `true` | Record why a turn was left unrouted. |
 | `include_user_message_in_audit` | `false` | Off keeps conversation content out of the audit. |
 | `grid` | `null` | Optional `["model-id: description", ...]` replacing the built-in grid. |
+| `platform_overrides` | `null` | Optional map of platform to settings overrides (`enabled`, `grid`, `confidence_threshold`, `max_effort`). |
+
+### Per-surface routing policy (`platform_overrides`)
+
+You can specify a routing policy for a specific surface — such as `cron`, `telegram`, or `cli` — without altering global behavior for any other surface.
+
+Each platform key in the map accepts overrides evaluated in precedence order:
+
+1. `enabled`: When set to `false`, turns on this platform bypass routing entirely, leaving provider requests untouched and recording a skip entry (`surface_disabled`).
+2. `grid`: A restricted subset of the routing grid (or list of `"model-id: description"` pairs). Acts as a structural cap: Jev can only choose among these models, and fallback stays inside this surface grid.
+3. `confidence_threshold`: Surface-specific confidence cutoff.
+4. `max_effort`: Ceiling on reasoning effort emitted by the router (`low`, `medium`, `high`), clamped before per-family effort translation.
+
+Any surface not listed, or if `platform_overrides` is absent/`null`, uses the global configuration unchanged.
+
+#### Example
+
+In your Hermes configuration:
+
+```yaml
+plugins:
+  entries:
+    jev-effort-router:
+      settings:
+        platform_overrides:
+          cron:
+            max_effort: medium
+            grid:
+              - "deepseek-v4.1-flash: general work"
+              - "glm-5.3-flash: cost-effective reasoning"
+          telegram:
+            enabled: false
+```
 
 ## How it behaves when things go wrong
 

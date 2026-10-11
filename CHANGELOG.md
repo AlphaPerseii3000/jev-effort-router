@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-10-11
+
+### Added
+
+- **Per-surface routing policy (`platform_overrides`).** An operator can declare standing routing policies
+  for individual surfaces (e.g. `cron`, `telegram`, `cli`) without affecting any other surface.
+  Configured in `plugin.yaml` under `platform_overrides`, each platform entry accepts overrides in
+  precedence order: `enabled`, `grid`, `confidence_threshold`, and `max_effort`.
+  - `enabled: false`: Leaves requests on that surface untouched, recording a skip entry naming the surface (`surface_disabled`).
+  - `grid`: Restricts routing and fallback to a subset of the global grid as a structural cap; Jev cannot choose off-grid models, and low-confidence fallback resolves within the surface grid.
+  - `confidence_threshold`: Per-surface decision threshold.
+  - `max_effort`: Clamps the reasoning effort level emitted by the router (`low`, `medium`, `high`) before per-family effort translation, applied whether chosen by Jev or from `default_effort`.
+  - Absent, `null`, unlisted platforms, or unparseable entries reproduce global 0.2.2 behavior byte for byte.
+
 ## [0.2.2] - 2026-09-23
 
 ### Fixed
@@ -235,6 +249,7 @@ First release.
   `grid`, `tail`, `reset`), and the `jev_effort_router_status` / `jev_effort_router_route` agent tools.
 - 74 tests, driving the real middleware callback against a stub Decisions API with no network access.
 
+[0.3.0]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.3.0
 [0.2.2]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.2.2
 [0.2.1]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.2.1
 [0.2.0]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.2.0
