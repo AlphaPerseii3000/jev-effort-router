@@ -165,6 +165,12 @@ class EffectiveSettings:
     default_model: str = DEFAULT_MODEL
     default_effort: str = DEFAULT_EFFORT
     max_effort: Optional[str] = None
+    #: Whether ``grid`` is the surface's own parsed policy grid (``True``) or the global grid
+    #: (``False``, whether from an absent policy or one whose grid did not parse). The decision
+    #: path needs the distinction: an off-grid ``default_model`` resolves to the effective grid
+    #: only when a policy grid is genuinely in force, so a surface the policy does not name keeps
+    #: today's configured default verbatim.
+    grid_from_policy: bool = False
 
     def entry_for(self, model_id: str) -> Optional[Entry]:
         return _entry_for(self.grid, model_id)
@@ -236,6 +242,7 @@ class Settings:
             default_model=self.default_model,
             default_effort=self.default_effort,
             max_effort=policy.max_effort if policy is not None else None,
+            grid_from_policy=policy is not None and policy.grid is not None,
         )
 
 

@@ -54,6 +54,8 @@ def test_a_cron_policy_reads_all_four_keys_and_resolves_once():
     assert effective.grid == (Entry("glm-5.3", "rigorous reasoning"),)
     assert effective.confidence_threshold == 0.7
     assert effective.max_effort == "medium"
+    # A policy that carried a parsed grid is a policy grid.
+    assert effective.grid_from_policy is True
     # The rest of the snapshot is the global setting unchanged.
     assert effective.default_model == settings.default_model
     assert effective.default_effort == settings.default_effort
@@ -73,6 +75,8 @@ def test_a_policy_field_may_inherit_and_the_policy_key_is_normalised():
     assert effective.grid == settings.grid
     assert effective.confidence_threshold == settings.confidence_threshold
     assert effective.max_effort is None
+    # No policy grid was declared, so this is the global grid, not a policy grid.
+    assert effective.grid_from_policy is False
 
 
 # -- unlisted / absent / null / unusable -------------------------------------------
@@ -83,6 +87,7 @@ def test_unlisted_platform_has_no_policy():
 
     assert settings.policy_for("telegram") is None
     assert settings.effective(None).grid == settings.grid
+    assert settings.effective(None).grid_from_policy is False
 
 
 @pytest.mark.parametrize(
@@ -150,6 +155,8 @@ def test_unparseable_policy_grid_keeps_the_other_keys_and_drops_only_the_grid(ba
     # The grid falls to the *global* grid, never to parse_grid's built-in six.
     assert effective.grid == settings.grid
     assert effective.grid != DEFAULT_GRID
+    # A policy whose grid alone was unparseable is not a policy grid.
+    assert effective.grid_from_policy is False
 
 
 # -- vocabulary --------------------------------------------------------------------

@@ -30,7 +30,13 @@ from .client import (
     Decision,
     JevClient,
 )
-from .config import ROUTED_API_MODES, ROUTED_PROVIDER, ROUTED_PROVIDER_ALIASES, Settings
+from .config import (
+    ROUTED_API_MODES,
+    ROUTED_PROVIDER,
+    ROUTED_PROVIDER_ALIASES,
+    EffectiveSettings,
+    Settings,
+)
 from .memo import Memo, TurnMemo
 from .state import last_user_message
 
@@ -156,7 +162,7 @@ class Router:
             if memo is not None:
                 decision = _decision_from_memo(memo)
             else:
-                fetched = self._decide(settings, request, where)
+                fetched = self._decide(settings, effective, request, where)
                 if fetched is None:
                     return None
                 decision = fetched
@@ -241,7 +247,9 @@ class Router:
         memo = self._memo.get_turn(turn_id)
         return memo, memo is not None
 
-    def _decide(self, settings: Settings, request: Dict[str, Any], where: "_Where") -> Optional[Decision]:
+    def _decide(
+        self, settings: Settings, effective: EffectiveSettings, request: Dict[str, Any], where: "_Where"
+    ) -> Optional[Decision]:
         messages = request.get("messages")
         if not isinstance(messages, list) or not messages or not last_user_message(messages).strip():
             self._record_skip(settings, REASON_SKIPPED_NO_MESSAGE, where)
@@ -250,7 +258,7 @@ class Router:
         try:
             decision, reason = self.client(settings).decide(
                 messages,
-                settings.grid,
+                effective,
                 platform=where.platform,
                 provider=where.provider,
             )

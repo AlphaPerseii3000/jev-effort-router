@@ -410,6 +410,98 @@ def test_the_policy_is_per_surface(tmp_path):
     assert transport.call_count == 1
 
 
+# -- the policy drives the whole decision path --------------------------------------
+
+
+CRON_POLICY = {
+    "cron": {
+        "grid": "glm-5.3: rigorous reasoning",
+        "confidence_threshold": 0.7,
+        "max_effort": "medium",
+    }
+}
+
+
+def test_a_cron_turn_gets_the_cron_grid_and_a_capped_effort(tmp_path):
+    """CAP-8: the surface grid is the one sent to Jev, and `max_effort` caps the emitted level."""
+    transport = StubTransport([StubResponse(decision_payload("3", 0.9, "high", 0.9))])
+    router, _ = build(tmp_path, transport, config={"platform_overrides": CRON_POLICY})
+
+    result = route(router, ollama_request(), platform="cron", model="glm-5.3")
+
+    # The one-entry cron grid is what Jev was offered — position `3` is off it, so the answer
+    # is unknown and falls back inside the cron grid.
+    criteria = transport.last_payload["questions"]["model_route"]["criteria"]
+    assert criteria == {"1": "glm-5.3: rigorous reasoning"}
+    assert result["request"]["model"] == "glm-5.3"
+    assert result["request"]["reasoning_effort"] == "medium"
+    record = json.loads((tmp_path / "routes.jsonl").read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert "unknown_choice" in record["fallback_reasons"]
+
+
+def test_an_off_grid_cron_answer_never_leaves_the_cron_grid(tmp_path):
+    transport = StubTransport([StubResponse(decision_payload("2", 0.99, "high", 0.9))])
+    router, _ = build(tmp_path, transport, config={"platform_overrides": CRON_POLICY})
+
+    result = route(router, ollama_request(), platform="cron", model="glm-5.3")
+
+    assert result["request"]["model"] == "glm-5.3"
+    record = json.loads((tmp_path / "routes.jsonl").read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert "unknown_choice" in record["fallback_reasons"]
+
+
+def test_a_cron_fallback_below_the_policy_threshold_stays_in_the_cron_grid(tmp_path):
+    transport = StubTransport([StubResponse(decision_payload("1", 0.2, "high", 0.9, grid_size=1))])
+    router, _ = build(tmp_path, transport, config={"platform_overrides": CRON_POLICY})
+
+    result = route(router, ollama_request(), platform="cron", model="glm-5.3")
+
+    assert result["request"]["model"] == "glm-5.3"
+    assert result["request"]["reasoning_effort"] == "medium"
+    record = json.loads((tmp_path / "routes.jsonl").read_text(encoding="utf-8").strip().splitlines()[-1])
+    assert "low_confidence" in record["fallback_reasons"]
+
+
+def test_a_cli_turn_on_the_same_router_routes_on_the_global_grid(tmp_path):
+    """The cron policy narrows cron only; a cli turn still uses the six-entry global grid."""
+    transport = StubTransport(
+        [
+            StubResponse(decision_payload("3", 0.9, "high", 0.9)),  # cron: off the one-entry grid
+            StubResponse(decision_payload("2", 0.9, "high", 0.8)),  # cli: global position 2
+        ]
+    )
+    router, _ = build(tmp_path, transport, config={"platform_overrides": CRON_POLICY})
+
+    cron = route(router, ollama_request(), platform="cron", model="glm-5.3", turn_id="t-cron")
+    cli = route(
+        router, ollama_request(), platform="cli", model="deepseek-v4.1-flash", turn_id="t-cli",
+        api_request_id="t-cli:api:0",
+    )
+
+    assert cron["request"]["model"] == "glm-5.3"
+    assert cli["request"]["model"] == "kimi-k3"
+    # The cli turn's payload was the six-entry global grid, not the cron surface's one entry.
+    criteria = transport.calls[1]["json"]["questions"]["model_route"]["criteria"]
+    assert set(criteria) == {"1", "2", "3", "4", "5", "6"}
+
+
+def test_max_effort_caps_the_default_effort_fallback_on_a_surface(tmp_path):
+    transport = StubTransport([StubResponse(decision_payload("1", 0.9, "high", 0.1))])
+    router, _ = build(
+        tmp_path,
+        transport,
+        config={
+            "default_effort": "high",
+            "platform_overrides": {"cron": {"grid": "glm-5.3: rigorous reasoning", "max_effort": "low"}},
+        },
+    )
+
+    result = route(router, ollama_request(), platform="cron", model="glm-5.3")
+
+    assert result["request"]["model"] == "glm-5.3"
+    assert result["request"]["reasoning_effort"] == "low"
+
+
 def test_a_turn_without_a_user_message_is_skipped(tmp_path):
     transport = StubTransport([])
     router, _ = build(tmp_path, transport)

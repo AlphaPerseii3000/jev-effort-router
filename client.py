@@ -12,7 +12,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from .config import Settings, api_key, redact
+from .config import EFFORT_LEVELS, EffectiveSettings, Settings, api_key, redact
 from .effort import resolve_effort
 from .grid import Entry, resolve
 from .state import (
@@ -71,6 +71,24 @@ def _as_float(value: Any, default: float = 0.0) -> float:
     except (TypeError, ValueError):
         return default
     return result if result == result else default
+
+
+#: Narrower than :data:`effort.LADDER`: the policy vocabulary is Jev's three rungs, so a cap
+#: never has to reason about ``none``/``max`` (which the plugin never routes to).
+_EFFORT_ORDER = {level: index for index, level in enumerate(EFFORT_LEVELS)}
+
+
+def _cap_effort(level: Optional[str], cap: Optional[str]) -> Optional[str]:
+    """Lower ``level`` to ``cap`` when it is strictly stronger; never raise it.
+
+    The ceiling only ever lowers a level and an absent ceiling changes nothing. A level or cap
+    outside the three-rung vocabulary is passed through untouched rather than guessed at.
+    """
+    if not level or not cap:
+        return level
+    if level not in _EFFORT_ORDER or cap not in _EFFORT_ORDER:
+        return level
+    return level if _EFFORT_ORDER[level] <= _EFFORT_ORDER[cap] else cap
 
 
 def _as_probabilities(raw: Any) -> Dict[str, float]:
@@ -158,12 +176,18 @@ class JevClient:
     def decide(
         self,
         messages: Sequence[Dict[str, Any]],
-        grid: Sequence[Entry],
+        effective: EffectiveSettings,
         *,
         platform: str = "",
         provider: str = "",
     ) -> Tuple[Optional[Decision], Optional[str]]:
         """Ask Jev for a model and an effort level.
+
+        ``effective`` is the frozen per-request snapshot the surface's policy produced: the grid
+        offered to Jev, the confidence threshold, and the fallback model/effort all come from it,
+        so a policy surface's decision path never reads the global grid or threshold. The global
+        ``Settings`` stays on the client for ``endpoint``/``timeout_s``/``jev_model``/
+        ``context_turns`` — the genuinely global, per-instance-cached values.
 
         Returns ``(decision, None)`` on a usable answer and ``(None, reason)`` otherwise. A
         partially usable answer still yields a decision: a confident model with an unconfident
@@ -181,7 +205,7 @@ class JevClient:
 
         payload = build_payload(
             messages,
-            grid,
+            effective.grid,
             jev_model=settings.jev_model,
             context_turns=settings.context_turns,
             platform=platform,
@@ -214,12 +238,11 @@ class JevClient:
             logger.warning("jev-effort-router: Jev returned a non-JSON body: %s", redact(getattr(response, "text", ""), 300))
             return None, REASON_MALFORMED
 
-        return self._interpret(data, grid, latency_ms=latency_ms)
+        return self._interpret(data, effective, latency_ms=latency_ms)
 
     def _interpret(
-        self, data: Any, grid: Sequence[Entry], *, latency_ms: int
+        self, data: Any, effective: EffectiveSettings, *, latency_ms: int
     ) -> Tuple[Optional[Decision], Optional[str]]:
-        settings = self._settings
         if not isinstance(data, dict):
             return None, REASON_MALFORMED
         answers = data.get("answers")
@@ -241,16 +264,26 @@ class JevClient:
             model_choice_text = _choice_text(model_answer)
             model_confidence = _as_float(model_answer.get("confidence"))
             model_probabilities = _as_probabilities(model_answer.get("probabilities"))
-            chosen = resolve(_criteria_map(model_answer), model_choice_text, grid)
+            chosen = resolve(_criteria_map(model_answer), model_choice_text, effective.grid)
             if chosen is None:
                 reasons.append(REASON_UNKNOWN_CHOICE)
-            elif model_confidence < settings.confidence_threshold:
+            elif model_confidence < effective.confidence_threshold:
                 reasons.append(REASON_LOW_CONFIDENCE)
                 chosen = None
 
         if chosen is None:
-            chosen = self._settings.entry_for(settings.default_model)
-            model = chosen.model_id if chosen else settings.default_model
+            chosen = effective.entry_for(effective.default_model)
+            if chosen is not None:
+                model = chosen.model_id
+            elif effective.grid_from_policy and effective.grid:
+                # A policy grid is a structural cap, and its fallback resolves inside it. When
+                # the operator's configured default is outside the policy grid, re-pin to the
+                # grid's first entry rather than emitting a model the surface forbids.
+                model = effective.grid[0].model_id
+            else:
+                # No policy grid: today's behaviour — the configured default verbatim, even
+                # when the global grid does not contain it.
+                model = effective.default_model
         else:
             model = chosen.model_id
 
@@ -277,18 +310,28 @@ class JevClient:
             candidate = normalise_effort_choice(effort_choice_text)
             if candidate is None:
                 reasons.append(REASON_UNKNOWN_CHOICE)
-            elif effort_confidence < settings.confidence_threshold:
+            elif effort_confidence < effective.confidence_threshold:
                 reasons.append(REASON_LOW_CONFIDENCE)
             else:
                 requested = candidate
 
         if requested is None and answered:
-            requested = settings.default_effort
+            requested = effective.default_effort
+
+        # The ceiling bounds the level the router emits — Jev's answer or `default_effort` —
+        # compared before the per-family table resolves it. A family's declared override may
+        # still raise the resolved wire value; that is intended (the ceiling is a cap on what
+        # the router asks for, not on the family's translation of it).
+        if requested is None and effective.max_effort:
+            # No usable effort answer at all, but the surface has a ceiling: emit it rather
+            # than omit the field, so the restricted surface is a policy and not a hint.
+            requested = effective.max_effort
+        requested = _cap_effort(requested, effective.max_effort)
 
         effort = resolve_effort(model, requested)
 
         alternatives = tuple(
-            entry.model_id for entry in grid if entry.model_id != model
+            entry.model_id for entry in effective.grid if entry.model_id != model
         )
         return (
             Decision(
