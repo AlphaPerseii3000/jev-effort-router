@@ -61,8 +61,14 @@ _install_package()
 def _router_api_key(monkeypatch):
     """Every test runs as an operator with a configured key.
 
-    The client short-circuits before the request when ``OPENROUTER_API_KEY`` is absent, so without
+    The client short-circuits before the request when no decision-endpoint key is set, so without
     this every routing test would take the "no key" path and silently pass for the wrong reason.
     Tests that assert the unconfigured behaviour delete it explicitly.
     """
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
+    # Keep the rest of the ambient key space out of the sandbox: REQUESTY_API_KEY now takes
+    # precedence over OPENROUTER_API_KEY, and other hosts' exported provider keys must not
+    # leak into the "which key is configured" assertions.
+    for name in ("REQUESTY_API_KEY", "ZAI_API_KEY", "GLM_API_KEY", "ZHIPUAI_API_KEY",
+                 "OLLAMA_API_KEY", "KIMI_API_KEY"):
+        monkeypatch.delenv(name, raising=False)

@@ -31,7 +31,11 @@ DEFAULT_JEV_MODEL = "typesafe/jev-1.13"
 DEFAULT_ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
 DEFAULT_TIMEOUT_S = 2.0
 DEFAULT_CONFIDENCE_THRESHOLD = 0.5
-DEFAULT_MODEL = "deepseek-v4.1-flash"
+#: Low-confidence fallback model. Was ``deepseek-v4.1-flash``, which resolves to OpenRouter
+#: per-token billing: during the 2026-10-22 zai 429 storm, fallback turns re-sent a ~330K-token
+#: working set on every retry with no cache pricing, and the prepaid balance drained to zero.
+#: ``glm-5.3-flash`` is flat-quota and already on the grid, so fallback resolves on-grid.
+DEFAULT_MODEL = "glm-5.3-flash"
 DEFAULT_EFFORT = "medium"
 DEFAULT_CONTEXT_TURNS = 4
 
@@ -317,11 +321,13 @@ def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
 
 
 def api_key() -> str:
-    """The OpenRouter key, from the environment only.
+    """The decision-endpoint key, from the environment only.
 
     Never read from ``config.yaml`` and never returned anywhere it could be logged.
+    Requesty (2026-10-20 cutover) takes precedence; OpenRouter remains the fallback
+    for hosts still pointed at the OpenRouter Decisions surface.
     """
-    return (os.environ.get("OPENROUTER_API_KEY") or "").strip()
+    return (os.environ.get("REQUESTY_API_KEY") or os.environ.get("OPENROUTER_API_KEY") or "").strip()
 
 
 def redact(value: Any, limit: int = 200) -> str:

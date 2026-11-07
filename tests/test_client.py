@@ -185,7 +185,7 @@ def test_unknown_model_choice_degrades_to_the_fallback(monkeypatch):
     decision, reason = client.decide(MESSAGES, settings.effective(None))
 
     assert reason is None
-    assert decision.model == "deepseek-v4.1-flash"
+    assert decision.model == "glm-5.3-flash"
     assert REASON_UNKNOWN_CHOICE in decision.fallback_reasons
 
 
@@ -195,7 +195,7 @@ def test_low_confidence_degrades(monkeypatch):
 
     decision, _ = client.decide(MESSAGES, settings.effective(None))
 
-    assert decision.model == "deepseek-v4.1-flash"
+    assert decision.model == "glm-5.3-flash"
     assert decision.effort == "medium"
     assert decision.fallback_reasons.count(REASON_LOW_CONFIDENCE) == 2
 
@@ -226,7 +226,7 @@ def test_non_choice_answer_types_are_treated_as_malformed(monkeypatch):
 
     # `choice` is empty on a wrongly-typed answer, so the model is off-grid and the turn
     # falls back rather than reading a probability as a model name.
-    assert decision.model == "deepseek-v4.1-flash"
+    assert decision.model == "glm-5.3-flash"
     assert REASON_UNKNOWN_CHOICE in decision.fallback_reasons
 
 
