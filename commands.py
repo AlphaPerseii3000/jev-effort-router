@@ -58,9 +58,16 @@ def _status_text(router, settings: Settings, recent: int = 5, provider: Optional
         f"  per turn:       {payload['route_per_turn']}",
         f"  fallback:       {payload['fallback']['model']} / {payload['fallback']['effort']}",
         f"  audit records:  {payload['audit']['records']} (enabled: {payload['audit']['enabled']})",
-        "",
-        _grid_text(settings, provider=target_provider),
     ]
+    breaker = payload.get("quota_breaker")
+    if breaker:
+        opened = f", open since {breaker['opened_at']}" if breaker.get("opened_at") else ""
+        lines.append(
+            "  quota breaker:  "
+            f"{breaker['state']} ({breaker['consecutive_429']}/{breaker['threshold']} consecutive HTTP 429, "
+            f"ttl {breaker['ttl_s']:.0f}s{opened})"
+        )
+    lines.extend(["", _grid_text(settings, provider=target_provider)])
     if payload.get("grid_unavailable"):
         lines.append(
             "  ⚠ not in the provider's catalog (a decision naming one of these is refused): "

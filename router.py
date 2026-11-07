@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from .audit import AuditLog
 from .catalog import ModelCatalog
 from .client import (
+    REASON_DECIDER_UNAVAILABLE,
     REASON_DISABLED,
     REASON_EXCEPTION,
     REASON_LOW_CONFIDENCE,
@@ -180,6 +181,9 @@ class Router:
         #: a turn, so recording the divergence on every provider request of a tool loop would
         #: repeat one fact once per request; bounded, because turns are unbounded.
         self._turn_events: Dict[str, None] = {}
+        #: ``window_id`` of the breaker window whose ``decider_unavailable_quota`` line was already
+        #: written. One audit line per window — never one per request.
+        self._quota_window: Optional[int] = None
 
     # -- wiring ------------------------------------------------------------------
 
@@ -207,11 +211,26 @@ class Router:
             settings.jev_model,
             settings.decider_model,
             settings.timeout_s,
+            # Breaker parameters are part of the decider's identity: raising the threshold or the
+            # TTL must take effect without waiting for an unrelated setting to change.
+            settings.console_jev_breaker_threshold,
+            settings.console_jev_breaker_ttl_s,
         )
         if self._client is None or self._client_key != key:
             self._client = self._client_factory(settings)
             self._client_key = key
         return self._client
+
+    def breaker_state(self, settings: Settings) -> Optional[Dict[str, Any]]:
+        """The active decider's quota breaker, or ``None`` when it has none.
+
+        Read-only and total: building the client to answer a status question must never raise,
+        and a decider without a breaker (``jev``, ``openai_compatible``) reports nothing at all.
+        """
+        try:
+            return self.client(settings).breaker_state()
+        except Exception:  # noqa: BLE001 - a status view never raises
+            return None
 
     # -- the middleware body -----------------------------------------------------
 
@@ -723,6 +742,49 @@ class Router:
             return None, reason or REASON_EXCEPTION
         return decision, None
 
+    def _record_quota_window(self, settings: Settings, where: "_Where", *, reason: str) -> bool:
+        """Write the single ``decider_unavailable_quota`` line of an open breaker window.
+
+        Returns True when the caller must *not* write its ordinary skip record. Two cases:
+
+        * the call that opened the window: its quota line replaces the plain ``upstream_error``
+          one, so the window is announced once with its timestamp, cause and counter;
+        * any request that arrives while the same window is still open: nothing is written — one
+          line per request is exactly the log flood this breaker exists to stop.
+
+        ``False`` means no window is open, so the caller records the reason as usual.
+        """
+        breaker = self.breaker_state(settings) or {}
+        window = breaker.get("window_id")
+        if breaker.get("state") != "open" or window is None:
+            # A closed breaker ends the window, so the next opening is audited again.
+            self._quota_window = None
+            return False
+        if window == self._quota_window:
+            logger.debug(
+                "jev-effort-router: quota breaker still open (window %s); its audit line was already written",
+                window,
+            )
+            return True
+        self._quota_window = window
+        logger.warning(
+            "jev-effort-router: decider unavailable (quota); the console quota breaker is open since %s "
+            "(%s consecutive HTTP 429) — turns keep the configured model",
+            breaker.get("opened_at"),
+            breaker.get("consecutive_429"),
+        )
+        self._record_skip(
+            settings,
+            REASON_DECIDER_UNAVAILABLE,
+            where,
+            extra={
+                "audit_detail": "decider unavailable (quota)",
+                "upstream_reason": reason,
+                "quota_breaker": breaker,
+            },
+        )
+        return True
+
     def _remember_failure(
         self, settings: Settings, effective: EffectiveSettings, where: "_Where", reason: str
     ) -> None:
@@ -1155,7 +1217,8 @@ class Router:
                 record_extra["reconciled_effort"],
             )
 
-        self._record_skip(settings, reason, where, extra=record_extra, keep_none=keep_none)
+        if not self._record_quota_window(settings, where, reason=reason):
+            self._record_skip(settings, reason, where, extra=record_extra, keep_none=keep_none)
         if routed is None:
             return None
         # Same shape a routed turn returns: ``reason`` names the model that went on the wire, so a

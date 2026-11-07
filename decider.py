@@ -17,10 +17,13 @@ import math
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from datetime import datetime, timezone
+from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
 
 from .config import (
     DEFAULT_CONSOLE_BASE_URL,
+    DEFAULT_CONSOLE_BREAKER_THRESHOLD,
+    DEFAULT_CONSOLE_BREAKER_TTL_S,
     DEFAULT_CONSOLE_JEV_FALLBACK_MODEL,
     DEFAULT_CONSOLE_JEV_MODEL,
     DEFAULT_CONSOLE_KEY_ENV,
@@ -61,6 +64,11 @@ REASON_SKIPPED_UNKNOWN_MODEL = "model_not_in_provider_catalog"
 REASON_SKIPPED_NO_MESSAGE = "no_user_message"
 REASON_SKIPPED_REPLAYED = "turn_already_routed"
 REASON_UPSTREAM_ERROR = "upstream_error"
+#: The console quota breaker is open: the turn was not routed and **not one HTTP request** was
+#: sent to SystemOne. Distinct from ``upstream_error`` on purpose — a 429 there is a deterministic
+#: quota answer, and an audit reader has to be able to tell "we stopped asking" from "we asked and
+#: the host refused" (the latter is still what the call that opened the window records).
+REASON_DECIDER_UNAVAILABLE = "decider_unavailable_quota"
 REASON_TIMEOUT = "timeout"
 REASON_MALFORMED = "malformed_answer"
 REASON_LOW_CONFIDENCE = "low_confidence"
@@ -238,12 +246,96 @@ class _SimpleResponse:
         return json.loads(self.text)
 
 
+@dataclass
+class QuotaBreaker:
+    """Consecutive-429 circuit breaker for the ``jev_console`` decider.
+
+    SystemOne answers a spent free quota with HTTP 429 and the body ``FreeUsageLimitError`` —
+    deterministic, not transient. Asking it again on the next turn buys the same refusal and
+    another log line, which is how four profiles ended up with 671 of them in a single day.
+
+    After ``threshold`` consecutive 429 answers the breaker **opens** and every call inside
+    ``ttl_s`` returns without touching the network. Any non-429 outcome — a valid answer, another
+    status, a timeout — clears the counter, so a lone 429 followed by a success never opens it.
+    When the TTL expires the breaker closes and the next call tries the endpoint again; if that
+    call is a 429 again the window starts over from one.
+
+    State is per process and per decider instance: it is a rate-of-retries guard, not a shared
+    distributed lock, and a restart simply starts from closed.
+    """
+
+    threshold: int = DEFAULT_CONSOLE_BREAKER_THRESHOLD
+    ttl_s: float = DEFAULT_CONSOLE_BREAKER_TTL_S
+    consecutive_429: int = 0
+    #: ``time.monotonic()`` when the window opened; ``None`` while closed.
+    opened_at: Optional[float] = None
+    #: Wall-clock ISO timestamp of the opening, for the audit and the status view.
+    opened_at_wall: Optional[str] = None
+    #: Monotonic serial of the windows opened so far. The identity the audit dedupes on: two
+    #: windows can open inside the same wall-clock second, so a timestamp is not an identity.
+    window_id: int = 0
+    #: Clock seam: tests advance it instead of sleeping.
+    clock: Callable[[], float] = field(default=time.monotonic, repr=False, compare=False)
+
+    def _now_wall(self) -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    def is_open(self) -> bool:
+        """Whether the breaker currently blocks calls. An expired window closes itself."""
+        if self.opened_at is None:
+            return False
+        if self.clock() - self.opened_at < max(0.0, float(self.ttl_s)):
+            return True
+        self.reset()
+        logger.info(
+            "jev-effort-router: Jev Console quota breaker closed after its %.0fs window; the next call asks again",
+            float(self.ttl_s),
+        )
+        return False
+
+    def record_429(self) -> bool:
+        """Count one 429. Returns True when *this* answer opened the window."""
+        self.consecutive_429 += 1
+        if self.opened_at is None and self.consecutive_429 >= max(1, int(self.threshold)):
+            self.opened_at = self.clock()
+            self.opened_at_wall = self._now_wall()
+            self.window_id += 1
+            return True
+        return False
+
+    def record_other(self) -> None:
+        """Any non-429 outcome: the consecutive streak is over, so the counter restarts."""
+        self.reset()
+
+    def reset(self) -> None:
+        self.consecutive_429 = 0
+        self.opened_at = None
+        self.opened_at_wall = None
+
+    def snapshot(self) -> Dict[str, Any]:
+        """The state exposed to the status tool, the audit record and the tests."""
+        is_open = self.is_open()
+        return {
+            "state": "open" if is_open else "closed",
+            "reason": "quota" if is_open else None,
+            "consecutive_429": self.consecutive_429,
+            "threshold": int(self.threshold),
+            "ttl_s": float(self.ttl_s),
+            "opened_at": self.opened_at_wall if is_open else None,
+            "window_id": self.window_id if is_open else None,
+        }
+
+
 class BaseDecider(ABC):
     """Abstract base decider."""
 
     def __init__(self, settings: Settings, transport: Any = None) -> None:
         self._settings = settings
         self._transport = transport
+
+    def breaker_state(self) -> Optional[Dict[str, Any]]:
+        """The quota breaker's state, or ``None`` for deciders that have none."""
+        return None
 
     @abstractmethod
     def decide(
@@ -785,6 +877,17 @@ class OpenAICompatibleDecider(BaseDecider):
 class JevConsoleDecider(BaseDecider):
     """Decider backend for Jev on OpenCode Console SystemOne."""
 
+    def __init__(self, settings: Settings, transport: Any = None) -> None:
+        super().__init__(settings, transport)
+        #: Quota breaker: N consecutive 429s from SystemOne stop the HTTP calls for the TTL.
+        self._breaker = QuotaBreaker(
+            threshold=settings.console_jev_breaker_threshold,
+            ttl_s=settings.console_jev_breaker_ttl_s,
+        )
+
+    def breaker_state(self) -> Optional[Dict[str, Any]]:
+        return self._breaker.snapshot()
+
     def _post_one(
         self, url: str, payload: Dict[str, Any], headers: Dict[str, str]
     ) -> Tuple[Optional[Any], Optional[str]]:
@@ -875,6 +978,16 @@ class JevConsoleDecider(BaseDecider):
         whether a second host may be asked: ``False`` means the console produced a valid answer the
         router simply could not apply, which is not a host failure.
         """
+        if self._breaker.is_open():
+            # No HTTP while the window is open: a 429 here is a spent quota, so a call would only
+            # reproduce the same answer (and another warning line) until the TTL expires.
+            logger.debug(
+                "jev-effort-router: Jev Console quota breaker is open (%d consecutive HTTP 429); "
+                "not calling the endpoint",
+                self._breaker.consecutive_429,
+            )
+            return None, REASON_DECIDER_UNAVAILABLE, True
+
         key_env = self._settings.api_key_env_for("jev_console")
         key = api_key(key_env)
         url = self._settings.base_url_for("jev_console")
@@ -932,6 +1045,7 @@ class JevConsoleDecider(BaseDecider):
                     )
                     last_reason = REASON_UPSTREAM_ERROR
                 last_technical = True
+                self._breaker.record_other()
                 continue
 
             latency_ms = int((time.monotonic() - started) * 1000)
@@ -939,9 +1053,26 @@ class JevConsoleDecider(BaseDecider):
                 # No response object at all is a technical failure of this host, even though the
                 # returned reason keeps the previous one for legacy compatibility.
                 last_technical = True
+                self._breaker.record_other()
                 continue
             status = getattr(response, "status_code", None)
-            if status is None or not (200 <= int(status) < 300):
+            try:
+                status_code = int(status) if status is not None else None
+            except (TypeError, ValueError):
+                status_code = None
+            if status_code == 429:
+                # A 429 from SystemOne is a quota answer, not a transient hiccup: count it and, on
+                # the Nth consecutive one, open the breaker for the TTL.
+                if self._breaker.record_429():
+                    logger.warning(
+                        "jev-effort-router: Jev Console quota exhausted (%d consecutive HTTP 429); "
+                        "quota breaker open for %.0f s",
+                        self._breaker.consecutive_429,
+                        float(self._breaker.ttl_s),
+                    )
+            else:
+                self._breaker.record_other()
+            if status_code is None or not (200 <= status_code < 300):
                 body = redact(getattr(response, "text", ""), 300, env_name=key_env)
                 logger.warning("jev-effort-router: Jev Console returned HTTP %s on %s: %s", status, model_name, body)
                 last_reason = REASON_UPSTREAM_ERROR
