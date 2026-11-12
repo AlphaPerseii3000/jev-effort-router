@@ -4,6 +4,48 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-11-12
+
+### Fixed
+
+- **The low-confidence fallback no longer resolves to a per-token model.** `default_model` was
+  `deepseek-v4.1-flash`, which on OpenRouter is billed per token. During the 2026-10-22 zai 429
+  storm, fallback turns re-sent a ~330K-token working set on every retry and drained the prepaid
+  balance. The default is now `glm-5.3-flash`: flat-quota, already on the grid, so a fallback stays
+  on-grid. Thanks to **@jhashemi** (#6).
+
+- **The router now owns the single reasoning knob on the wire.** When a decision carries an effort,
+  `_apply` drops a nested `extra_body.reasoning` before writing the top-level `reasoning_effort`.
+  Carrying both spellings is an OpenRouter HTTP 400 (“both provided with conflicting values”), and
+  it aborted the whole fallback chain on 2026-10-22. Unrelated `extra_body` keys survive, and the
+  no-effort path leaves the profile's nested form alone. Thanks to **@jhashemi** (#4).
+
+- **The Requesty cutover is coherent end to end.** 0.3.1 introduced `REQUESTY_API_KEY` precedence
+  but kept OpenRouter's endpoint and Jev id, so a host with only a Requesty key would have sent it
+  to `openrouter.ai` with `typesafe/jev-1.13`: a 401 from the wrong surface, then a 404 for a model
+  Requesty does not serve. Endpoint, key and default model are now selected together:
+
+  | Key present | Endpoint | Default Jev model |
+  |---|---|---|
+  | `REQUESTY_API_KEY` | `https://router.requesty.ai/v1/systemone` | `typesafe/jev-1.14.0` |
+  | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/alpha/decisions` | `typesafe/jev-1.13` |
+
+  An explicit non-default `endpoint` still wins (self-hosted proxy), and a deliberately pinned
+  `jev_model` is never rewritten. `redact()` scrubs both keys, not only the selected one.
+
+### Changed
+
+- **The README no longer claims to be the only entry that decides model and effort.** The catalog
+  now contains effort routers (`hermes-adaptive-effort`, `effortless-hermes`, the latter with an
+  optional model map) and model routers (`hermes-jev-routing`). The claim that nothing else decided
+  both was true when 0.1.0 shipped and is not true now; the paragraph now describes what this plugin
+  actually adds (a measured grid, a confidence guard, a per-surface policy and a coverage report).
+
+### Tests
+
+`pytest -q tests`: **170 passed, 1 skipped**. New coverage pins the endpoint/key/model pairing, the
+custom-endpoint override, and redaction of both surfaces.
+
 ## [0.3.0] - 2026-10-11
 
 ### Added
@@ -249,6 +291,7 @@ First release.
   `grid`, `tail`, `reset`), and the `jev_effort_router_status` / `jev_effort_router_route` agent tools.
 - 74 tests, driving the real middleware callback against a stub Decisions API with no network access.
 
+[0.3.1]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.3.1
 [0.3.0]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.3.0
 [0.2.2]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.2.2
 [0.2.1]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.2.1
