@@ -25,7 +25,11 @@ provides_hooks:
 provides_tools:
   - jev_effort_router_status
   - jev_effort_router_route
-requires_env:
+# Neither key is universally required: the plugin routes through Requesty when its key is
+# present, OpenRouter otherwise, and stays inert (recording a skip) when neither is set. Listing
+# both under `requires_env` made the installer prompt for both, including the one the operator
+# does not use; `optional_env` declares them without that prompt. The README says to set one.
+optional_env:
   - name: REQUESTY_API_KEY
     description: Requesty API key - Jev is reached through Requesty's System-One decisions surface.
     url: https://app.requesty.ai/manage-apikeys

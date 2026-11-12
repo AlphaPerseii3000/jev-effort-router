@@ -21,6 +21,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 - `plugin.yaml` now declares `requires_hermes: ">=0.21.4"`, matching the catalog entry. Catalog rule
   14 asks for the same floor in the manifest because older Hermes versions enforce only that one.
+- **The two keys are declared as `optional_env`, not `requires_env`.** Neither is universally
+  required — the plugin routes through Requesty when its key is present, OpenRouter otherwise, and
+  stays inert when neither is set — but listing both as required made the installer prompt for the
+  one the operator does not use. The README still says to set exactly one.
 - README gains a short **What leaves your machine** section: the routed turn sends the user message
   and up to `context_turns` previous turns to the selected Decisions surface, and the audit file
   keeps identifiers and decisions — message text only behind `include_user_message_in_audit`.
