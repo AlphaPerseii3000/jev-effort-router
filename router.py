@@ -292,6 +292,22 @@ class Router:
         routed = dict(original_request)
         routed["model"] = decision.model
         if decision.effort:
+            # One reasoning knob on the wire. Providers reject a request that
+            # carries BOTH a top-level ``reasoning_effort`` and a nested
+            # ``extra_body.reasoning`` — OpenRouter answers HTTP 400
+            # ("both provided with conflicting values"). This bit the
+            # quota-fallback leg on 2026-10-22: the provider profile had
+            # already expressed the configured effort as
+            # ``extra_body.reasoning`` when this router added its own
+            # top-level field. The router's effort decision is authoritative,
+            # so the nested form is dropped and only the top-level field is
+            # sent. Mirrors the fleet-jev-router reconcile block (same fix,
+            # same day — this twin was missed in that landing).
+            extra_body = routed.get("extra_body")
+            if isinstance(extra_body, dict) and isinstance(extra_body.get("reasoning"), dict):
+                merged = dict(extra_body)
+                merged.pop("reasoning", None)
+                routed["extra_body"] = merged
             routed[EFFORT_WIRE_KEY] = decision.effort
         else:
             routed.pop(EFFORT_WIRE_KEY, None)
