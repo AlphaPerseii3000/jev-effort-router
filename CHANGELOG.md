@@ -4,6 +4,18 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-11-12
+
+### Changed
+
+- **`httpx` now has an upper bound: `>=0.27,<1`.** Catalog dependency review asks for the oldest
+  API-compatible floor plus a ceiling; a bare `>=` turns a routine pin bump into a request for
+  changes. No code change.
+- A regression test now pins that adding a `provider_profiles` entry for another provider does not
+  move the default `ollama-cloud` profile (`grid` and `default_model` stay the measured ones).
+
+`pytest -q tests`: **206 passed, 1 skipped**.
+
 ## [0.4.0] - 2026-11-12
 
 ### Added
@@ -362,6 +374,7 @@ First release.
   `grid`, `tail`, `reset`), and the `jev_effort_router_status` / `jev_effort_router_route` agent tools.
 - 74 tests, driving the real middleware callback against a stub Decisions API with no network access.
 
+[0.4.1]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.4.1
 [0.4.0]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.4.0
 [0.3.2]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.3.2
 [0.3.1]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.3.1
