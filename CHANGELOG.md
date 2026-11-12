@@ -4,6 +4,46 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-11-12
+
+### Added
+
+- **Provider profiles (phase 1 of the provider RFC).** The six measured criteria are now six
+  **capability slots** — `general`, `deep-code`, `rigorous`, `long-text`, `tool-throughput`,
+  `trivial` — and a provider profile maps each slot to one of *that provider's* models. Jev still
+  answers a positional key; only the local mapping changes. `provider_profiles` accepts a map of
+  provider name to `{models: {slot: "model-id[: description]"}, fallback: "model-id"}`, or a list
+  read positionally.
+- **The provider gate is profile-driven.** `ollama-cloud` ships built in; another
+  `chat_completions` provider is routed only when the operator declares a profile for it. A provider
+  with no profile still passes through untouched and records `provider_not_routed`.
+- **Per-provider catalog check.** A chosen model is validated against
+  `provider_models_cache.json[provider].models`, with the legacy per-provider cache file as a
+  fallback. A model the catalog proves absent is refused and the turn keeps the configured model.
+- **Status and route surfaces show profiles.** `status` lists every profile with its slot→model map
+  and fallback; `hermes jev-effort-router route --provider <name> "…"` and the
+  `jev_effort_router_route` tool accept an optional provider.
+
+### Compatibility
+
+- **No profile configured: byte-identical to 0.3.2.** The built-in profile is the same six
+  Ollama:Cloud models in the same order with the same descriptions; the existing `grid`,
+  `default_model`, `platform_overrides` and effort paths are unchanged.
+- **Within-provider only.** A profile does not switch providers; Hermes core owns provider fallback.
+  Only `chat_completions` is routed, and phase 1 keeps the top-level `reasoning_effort` wire field.
+  Provider-specific effort translation (OpenRouter nested reasoning, Gemini thinking config, etc.)
+  is phase 2.
+- **No unmeasured profile ships.** Another provider's profile is operator-supplied and validated
+  against that provider's catalog. The shipped profile remains the benchmarked Ollama:Cloud one.
+- On a cache-priced provider, `route_per_turn: false` is the safe setting until the cache-aware
+  policy lands: changing model every turn invalidates the prompt cache.
+
+### Verification
+
+`pytest -q tests`: **205 passed, 1 skipped**. The new suite covers the identity regression, slot
+mapping, the provider gate, per-profile fallback, surface policy on a profile, catalog lookup per
+provider, and the status/route surfaces.
+
 ## [0.3.2] - 2026-11-12
 
 ### Fixed
@@ -322,6 +362,7 @@ First release.
   `grid`, `tail`, `reset`), and the `jev_effort_router_status` / `jev_effort_router_route` agent tools.
 - 74 tests, driving the real middleware callback against a stub Decisions API with no network access.
 
+[0.4.0]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.4.0
 [0.3.2]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.3.2
 [0.3.1]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.3.1
 [0.3.0]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.3.0
