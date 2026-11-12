@@ -318,7 +318,7 @@ def test_unknown_choice_falls_back(tmp_path):
 
     result = route(router, ollama_request())
 
-    assert result["request"]["model"] == "deepseek-v4.1-flash"
+    assert result["request"]["model"] == "glm-5.3-flash"
     record = json.loads((tmp_path / "routes.jsonl").read_text(encoding="utf-8").strip().splitlines()[-1])
     assert "unknown_choice" in record["fallback_reasons"]
 

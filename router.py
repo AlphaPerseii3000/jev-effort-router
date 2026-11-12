@@ -269,7 +269,7 @@ class Router:
 
         if decision is None:
             if reason == REASON_NO_API_KEY:
-                logger.info("jev-effort-router: OPENROUTER_API_KEY is not set; turns keep the configured model")
+                logger.info("jev-effort-router: no decision-endpoint key (REQUESTY_API_KEY/OPENROUTER_API_KEY) is set; turns keep the configured model")
             self._record_skip(settings, reason or REASON_EXCEPTION, where)
             return None
         return decision

@@ -142,7 +142,7 @@ form generated from `plugin.yaml`.
 | `jev_model` | `typesafe/jev-1.13` | Decision model. `typesafe/jev-latest` follows the newest release. |
 | `confidence_threshold` | `0.5` | Below this, the turn keeps the configured model and effort. |
 | `timeout_s` | `2.0` | Budget for the decision call. Any timeout leaves the request untouched. |
-| `default_model` | `deepseek-v4.1-flash` | Model used when the decision is below threshold. |
+| `default_model` | `glm-5.3-flash` | Model used when the decision is below threshold. |
 | `default_effort` | `medium` | Effort used when the decision is below threshold. |
 | `context_turns` | `4` | Preceding turns sent to Jev as recent context. |
 | `route_per_turn` | `true` | Off routes once per session instead of once per user turn. |
