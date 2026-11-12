@@ -9,6 +9,9 @@ surface's key to the other is a 401, and sending the OpenRouter model spelling t
 
 from __future__ import annotations
 
+import sys
+import types
+
 import pytest
 
 from client import JevClient
@@ -24,6 +27,16 @@ from config import (
     resolve_endpoint,
 )
 from stubs import StubResponse, StubTransport, decision_payload
+
+
+def _install_fake_secret_scope(monkeypatch, resolver):
+    """Install a stand-in for ``agent.secret_scope`` (the host's profile-scoped resolver)."""
+    module = types.ModuleType("agent.secret_scope")
+    module.get_secret = resolver
+    package = types.ModuleType("agent")
+    package.secret_scope = module
+    monkeypatch.setitem(sys.modules, "agent", package)
+    monkeypatch.setitem(sys.modules, "agent.secret_scope", module)
 
 
 MESSAGES = [{"role": "user", "content": "refactore le module de paiement"}]
@@ -140,3 +153,47 @@ def test_client_refuses_a_requesty_endpoint_without_its_key(monkeypatch):
     assert decision is None
     assert reason == "no_api_key"
     assert transport.calls == []
+
+
+# -- credentials go through the host's profile scope, not os.environ -------------------
+
+
+def test_api_key_prefers_the_profile_secret_scope(monkeypatch):
+    """The multiplexing gateway serves many profiles from one process; os.environ leaks."""
+    seen = []
+
+    def get_secret(name, default=None):
+        seen.append(name)
+        return {"OPENROUTER_API_KEY": "scoped-or"}.get(name, default)
+
+    _install_fake_secret_scope(monkeypatch, get_secret)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "ambient-or")
+
+    assert api_key(DEFAULT_ENDPOINT) == "scoped-or"
+    assert "OPENROUTER_API_KEY" in seen
+
+
+def test_api_key_fails_closed_when_the_scope_is_missing(monkeypatch):
+    """A multiplexed turn with no scope must not fall back to the process environment."""
+
+    class UnscopedSecretError(RuntimeError):
+        pass
+
+    def get_secret(name, default=None):
+        raise UnscopedSecretError(name)
+
+    _install_fake_secret_scope(monkeypatch, get_secret)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "another-profiles-key")
+
+    assert api_key(DEFAULT_ENDPOINT) == ""
+
+
+def test_redact_reads_the_same_scope(monkeypatch):
+    def get_secret(name, default=None):
+        return {"REQUESTY_API_KEY": "scoped-rq", "OPENROUTER_API_KEY": "scoped-or"}.get(name, default)
+
+    _install_fake_secret_scope(monkeypatch, get_secret)
+
+    redacted = redact("scoped-rq / scoped-or")
+
+    assert redacted.count("[REDACTED]") == 2

@@ -4,6 +4,33 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.2] - 2026-11-12
+
+### Fixed
+
+- **Credentials are read through Hermes' profile-scoped resolver.** `api_key()` went straight to
+  `os.environ`, which is wrong under the multiplexing gateway: one process serves several profiles,
+  and a bare environment read can serve profile A's key to profile B's turn. The plugin now calls
+  `agent.secret_scope.get_secret()`, which honours the active profile's scope and **fails closed**
+  when multiplexing is on with no scope installed. Single-profile deployments are unchanged (the
+  resolver falls through to the process environment); the lazy import keeps the module usable
+  outside a Hermes install. `redact()` uses the same resolver, so both surfaces stay scrubbed.
+  This is catalog admission rule 11, and it was a real cross-profile leak, not a lint finding.
+
+### Changed
+
+- `plugin.yaml` now declares `requires_hermes: ">=0.21.4"`, matching the catalog entry. Catalog rule
+  14 asks for the same floor in the manifest because older Hermes versions enforce only that one.
+- README gains a short **What leaves your machine** section: the routed turn sends the user message
+  and up to `context_turns` previous turns to the selected Decisions surface, and the audit file
+  keeps identifiers and decisions — message text only behind `include_user_message_in_audit`.
+
+### Tests
+
+`pytest -q tests`: **173 passed, 1 skipped**. New cases assert that a scoped secret wins over the
+ambient environment, that a missing scope fails closed instead of leaking, and that redaction reads
+the same scope.
+
 ## [0.3.1] - 2026-11-12
 
 ### Fixed
@@ -291,6 +318,7 @@ First release.
   `grid`, `tail`, `reset`), and the `jev_effort_router_status` / `jev_effort_router_route` agent tools.
 - 74 tests, driving the real middleware callback against a stub Decisions API with no network access.
 
+[0.3.2]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.3.2
 [0.3.1]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.3.1
 [0.3.0]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.3.0
 [0.2.2]: https://github.com/AlphaPerseii3000/jev-effort-router/releases/tag/v0.2.2

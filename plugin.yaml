@@ -1,10 +1,11 @@
 name: jev-effort-router
-version: 0.3.1
+version: 0.3.2
 manifest_version: 2
 api_version: 1
 description: Route each user turn to the best Ollama:Cloud model and reasoning effort via TypeSafe Jev's decision endpoint. Ollama:Cloud only — no other provider is routed.
 author: AlphaPerseii3000
 license: MIT
+requires_hermes: ">=0.21.4"
 homepage: https://github.com/AlphaPerseii3000/jev-effort-router
 tags: [routing, models, reasoning, ollama-cloud, decisions]
 # ``provides_middleware`` is not in the host's ``_KNOWN_MANIFEST_FIELDS``, so declaring it emits an

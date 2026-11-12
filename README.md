@@ -257,6 +257,18 @@ than sending a generic parameter. It never escalates a level, never invents one,
 than risk a 400. The notable mapping: Kimi K3's documented set is `low | high | max`, so a `medium` request
 lands on `high`.
 
+## What leaves your machine
+
+On every routed turn, the plugin sends the current user message and up to `context_turns` (default 4)
+preceding conversation turns, plus the surface name and the provider name, to the Decisions endpoint
+selected by your key — OpenRouter or Requesty — where they are evaluated by Jev and billed to that
+account. That slice is bounded: the transcript is not uploaded, and the plugin does not read files,
+run commands or contact any other host.
+
+The audit file under `plugin-data/jev-effort-router/routes.jsonl` stores the decision, confidences,
+latency, model/effort and turn identifiers. It stores the user message only when
+`include_user_message_in_audit` is explicitly enabled. There is no telemetry.
+
 ## Audit trail
 
 One JSONL record per routing attempt, under `<HERMES_HOME>/plugin-data/jev-effort-router/routes.jsonl`:

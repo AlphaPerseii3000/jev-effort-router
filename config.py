@@ -376,8 +376,29 @@ def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
     return settings
 
 
+def _secret(name: str) -> str:
+    """Read a credential through Hermes' profile-scoped resolver when it is available.
+
+    A bare ``os.environ`` read is wrong under the multiplexing gateway: profile A's key would
+    be visible to profile B's turn. ``agent.secret_scope.get_secret`` is the host's resolver —
+    it honours the active profile's scope and fails closed when multiplexing is on with no
+    scope installed. Single-profile deployments still fall through to the process environment,
+    which is how cron and systemd inject keys.
+
+    The import is lazy and the fallback keeps this module testable outside a Hermes install.
+    """
+    try:
+        from agent.secret_scope import get_secret  # type: ignore
+    except Exception:  # noqa: BLE001 - no host, no scope: the environment is the only source
+        return (os.environ.get(name) or "").strip()
+    try:
+        return str(get_secret(name, "") or "").strip()
+    except Exception:  # noqa: BLE001 - multiplexed with no scope: fail closed, never leak env
+        return ""
+
+
 def api_key(endpoint: str = "") -> str:
-    """The key for ``endpoint``, from the environment only.
+    """The key for ``endpoint``, from the active profile's secret scope.
 
     Never read from ``config.yaml`` and never returned anywhere it could be logged. The key is
     chosen by endpoint host, because the two Decisions surfaces authenticate separately:
@@ -387,10 +408,10 @@ def api_key(endpoint: str = "") -> str:
     """
     host = endpoint_host(endpoint)
     if "requesty" in host:
-        return (os.environ.get("REQUESTY_API_KEY") or "").strip()
+        return _secret("REQUESTY_API_KEY")
     if "openrouter" in host:
-        return (os.environ.get("OPENROUTER_API_KEY") or "").strip()
-    return (os.environ.get("REQUESTY_API_KEY") or os.environ.get("OPENROUTER_API_KEY") or "").strip()
+        return _secret("OPENROUTER_API_KEY")
+    return _secret("REQUESTY_API_KEY") or _secret("OPENROUTER_API_KEY")
 
 
 def redact(value: Any, limit: int = 200) -> str:
@@ -398,8 +419,7 @@ def redact(value: Any, limit: int = 200) -> str:
     text = str(value)
     # Scrub every configured decision key, not just the one this endpoint selects: a log line
     # may quote a body produced while the other surface was active (or a key rotated mid-run).
-    for key in {os.environ.get("REQUESTY_API_KEY"), os.environ.get("OPENROUTER_API_KEY")}:
-        key = (key or "").strip()
+    for key in {_secret("REQUESTY_API_KEY"), _secret("OPENROUTER_API_KEY")}:
         if key:
             text = text.replace(key, "[REDACTED]")
     if len(text) > limit:
