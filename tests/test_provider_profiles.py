@@ -12,7 +12,7 @@ import json
 
 import pytest
 
-from config import load_settings
+from config import DEFAULT_MODEL, load_settings
 from grid import DEFAULT_GRID, SLOT_DESCRIPTIONS, SLOTS, Entry
 from profiles import (
     DEFAULT_PROVIDER,
@@ -84,6 +84,16 @@ def test_an_unknown_provider_has_no_profile():
 
     assert settings.profile_for("openrouter") is None
     assert settings.profile_for("") is not None  # empty resolves to the default
+
+
+def test_adding_another_profile_does_not_move_the_default_profile():
+    settings = settings_for(OPENROUTER)
+
+    default = settings.profile_for(DEFAULT_PROVIDER)
+    assert default is not None
+    assert default.entries == DEFAULT_GRID
+    assert settings.grid == DEFAULT_GRID
+    assert settings.default_model == DEFAULT_MODEL
 
 
 # -- parsing an operator profile -----------------------------------------------------
