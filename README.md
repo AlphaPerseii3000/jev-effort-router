@@ -19,7 +19,8 @@ actually served the turn.
 models, the per-family effort table is written for Ollama:Cloud's reasoning-effort vocabulary, and the
 middleware routes **only** the `ollama-cloud` provider — every other provider passes through untouched, so
 installing it on another provider changes nothing. You need Hermes on `provider: ollama-cloud`, with that
-provider's catalog reachable, for this plugin to have any effect.
+provider's catalog reachable, for this plugin to have any effect. The provider-agnostic design is an
+open RFC, not a shipped feature: [`docs/provider-profiles.md`](docs/provider-profiles.md).
 
 Hermes normally runs one model at one reasoning-effort for a whole session. `jev-effort-router` asks Jev —
 on every user turn, in ~270 ms and at $0.042/M input tokens — which of six benchmarked Ollama:cloud models
