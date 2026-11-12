@@ -2,8 +2,14 @@
 
 Companion of SPEC.md. Verified 2026-09-22 against the OpenRouter model page for `typesafe/jev-1.13`,
 OpenRouter's Jev tutorial, the Decisions API reference, and TypeSafe's "How to build with System One".
+The Requesty variant was verified 2026-11-12 against Requesty's Decisions page and its published
+OpenAPI schema (`SystemOneRequest`: `state` accepts a string, an object or an array).
 
-## Endpoint
+## Endpoints
+
+The plugin supports both hosted Decisions surfaces and selects one from the key that is present.
+
+### OpenRouter
 
 ```
 POST https://openrouter.ai/api/alpha/decisions
@@ -16,6 +22,19 @@ completions endpoint; chat SDKs do not work against it. Single provider (TypeSaf
 free, 32K context, p50 latency 0.27 s (p99 0.55 s over the last week), 100% uptime / 99.88% availability
 over three days. `typesafe/jev-latest` tracks the newest Jev; this plugin pins `typesafe/jev-1.13` by
 default so a silent model swap cannot change routing behaviour under the operator.
+
+### Requesty
+
+```
+POST https://router.requesty.ai/v1/systemone
+Authorization: Bearer $REQUESTY_API_KEY
+Content-Type: application/json
+```
+
+Same System One request shape (`model`, `state`, `questions`) and the same `answers` response with a
+typed answer per question. Requesty serves `typesafe/jev-1.14.0` (and the `typesafe/jev-latest` alias);
+the OpenRouter spelling `typesafe/jev-1.13` is not on its model list, so the plugin's default model is
+endpoint-specific. Sending a key for one surface to the other is a 401.
 
 ## Request shape
 
@@ -82,7 +101,7 @@ value and split on `":"`, is replaced by this keyed form.
 | `confidence` below the configured threshold | no route; `fallback_reason: "low_confidence"` |
 | `choice` key not in the criteria we sent | no route; `fallback_reason: "unknown_choice"` |
 | chosen model not in the configured grid | no route; `fallback_reason: "model_not_in_grid"` |
-| `OPENROUTER_API_KEY` unset | plugin inert; one INFO line at registration, no per-turn noise |
+| no key for the selected surface | plugin inert; one INFO line at registration, no per-turn noise |
 | 402 / insufficient credits | no route; `fallback_reason: "upstream_error"` with the status code in the log |
 
 The error body is logged truncated and with the `Authorization` value never included. A route is always

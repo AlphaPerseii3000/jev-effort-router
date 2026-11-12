@@ -25,7 +25,7 @@ reasoning and generation in the main model — it only steers.
 ## Capabilities
 
 - **CAP-1** — An operator can install and enable the plugin in one command, and a fresh Hermes session
-  routes every turn without any further configuration beyond an OpenRouter API key.
+  routes every turn without any further configuration beyond a decision-endpoint key.
   - **success:** `hermes plugins enable jev-effort-router` followed by `hermes plugins list` shows the plugin
     enabled with its declared middleware/hook/tool surface; `hermes plugins doctor <repo>` exits 0.
 
@@ -75,8 +75,10 @@ reasoning and generation in the main model — it only steers.
 - Routing rides `llm_request` middleware (`hermes_cli/middleware.py`, `hermes.middleware.v1`). That kind
   exists in hermes-agent as installed here (0.21.4); a plugin written against it registers with a warning
   instead of failing on an older Hermes, so the fallback is a no-op, never a crash.
-- The API key is read from `OPENROUTER_API_KEY`; it is never written to `config.yaml`, never logged, and
-  never included in an audit record.
+- The API key is read from `REQUESTY_API_KEY` or `OPENROUTER_API_KEY`, chosen by decision-endpoint
+  host; it is never written to `config.yaml`, never logged, and never included in an audit record.
+  The endpoint follows the key: Requesty's `/v1/systemone` for a Requesty key, OpenRouter's
+  `/api/alpha/decisions` for an OpenRouter key.
 - Network failure, HTTP status, or malformed Jev response must never raise into the turn. The middleware
   timeout is host-owned (`plugins.hook_callback_timeout`, default 30 s and fail-open), so the plugin
   enforces its own much shorter budget (default 2.0 s) and returns `None` on any error.
@@ -127,11 +129,12 @@ the configured model.
 - The host middleware contract is as installed in this profile (hermes-agent 0.21.4): `register_middleware("llm_request", cb)`,
   callback returns `{"request": {...}}`, receives `request`, `original_request`, plus
   `task_id`/`turn_id`/`request_id`-style context kwargs, and the host swallows callback exceptions.
-- Jev is reached over OpenRouter's Decisions API (`POST https://openrouter.ai/api/alpha/decisions`,
-  `typesafe/jev-1.13`), reachable with the operator's `OPENROUTER_API_KEY` and prepaid credits; no
-  TypeSafe key is needed.
+- Jev is reached over either Decisions surface: OpenRouter (`POST https://openrouter.ai/api/alpha/decisions`,
+  `typesafe/jev-1.13`) with `OPENROUTER_API_KEY`, or Requesty (`POST https://router.requesty.ai/v1/systemone`,
+  `typesafe/jev-1.14.0`) with `REQUESTY_API_KEY`. The endpoint follows the key; no TypeSafe key is needed.
 - The Jev request/response shapes behave as documented in `jev-decisions-api.md`; the exact wire
-  contract was verified against OpenRouter's model page, tutorial, and Decisions API reference.
+  contract was verified against OpenRouter's model page, tutorial, and Decisions API reference, and
+  against Requesty's Decisions docs and OpenAPI schema (state accepts an object; answers are typed).
 - The plugin keys effort translation off the provider profile name `ollama-cloud`; operators using a
   differently-named profile pointing at `ollama.com` are out of scope for the first release.
 - Ollama:cloud is the only provider the routing grid was benchmarked on, so the plugin is a no-op

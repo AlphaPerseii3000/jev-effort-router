@@ -12,6 +12,7 @@ import os
 from dataclasses import dataclass, field, fields
 from types import MappingProxyType
 from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
+from urllib.parse import urlsplit
 
 from .grid import DEFAULT_GRID, Entry, parse_grid, parse_grid_strict
 
@@ -29,6 +30,10 @@ EFFORT_LEVELS: Tuple[str, ...] = ("low", "medium", "high")
 
 DEFAULT_JEV_MODEL = "typesafe/jev-1.13"
 DEFAULT_ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
+#: Requesty's Decisions endpoint. It is a different API from OpenRouter's: the path is
+#: ``/v1/systemone`` and the current Jev id carries a patch component (``jev-1.14.0``).
+REQUESTY_ENDPOINT = "https://router.requesty.ai/v1/systemone"
+REQUESTY_DEFAULT_JEV_MODEL = "typesafe/jev-1.14.0"
 DEFAULT_TIMEOUT_S = 2.0
 DEFAULT_CONFIDENCE_THRESHOLD = 0.5
 #: Low-confidence fallback model. Was ``deepseek-v4.1-flash``, which resolves to OpenRouter
@@ -288,6 +293,50 @@ def parse_platform_overrides(raw: Any) -> Mapping[str, PlatformPolicy]:
     return MappingProxyType(policies)
 
 
+def endpoint_host(endpoint: str) -> str:
+    """The lowercase hostname of a decision endpoint, or ``""`` when it cannot be parsed."""
+    try:
+        return (urlsplit(str(endpoint or "").strip()).hostname or "").lower()
+    except (TypeError, ValueError):
+        return ""
+
+
+def is_requesty_endpoint(endpoint: str) -> bool:
+    return "requesty" in endpoint_host(endpoint)
+
+
+def resolve_endpoint(configured: str = DEFAULT_ENDPOINT) -> str:
+    """The endpoint to call, given the configured one and the keys present.
+
+    The two Decisions surfaces are not interchangeable: OpenRouter's is
+    ``/api/alpha/decisions`` and Requesty's is ``/v1/systemone``. Sending a Requesty key to
+    OpenRouter (or the reverse) is a 401, so the endpoint has to follow the key. An explicit
+    non-default ``endpoint`` always wins, which keeps the custom-endpoint test path and
+    self-hosted proxies working.
+
+    Requesty takes precedence when both keys are present, matching the 2026-10-20 cutover
+    carried in 0.3.1. Operators who want the OpenRouter surface while a Requesty key also
+    exists should remove the Requesty key (the endpoint setting is deliberately not part of
+    the public config schema).
+    """
+    text = str(configured or "").strip()
+    if text and text != DEFAULT_ENDPOINT:
+        return text
+    if (os.environ.get("REQUESTY_API_KEY") or "").strip():
+        return REQUESTY_ENDPOINT
+    return DEFAULT_ENDPOINT
+
+
+def default_jev_model(endpoint: str) -> str:
+    """The decision-model id the endpoint actually serves.
+
+    OpenRouter serves ``typesafe/jev-1.13`` (and 1.14); Requesty serves ``typesafe/jev-1.14.0``
+    and the ``typesafe/jev-latest`` alias. The patch-level spelling matters: Requesty's docs
+    name the model as ``typesafe/jev-1.14.0``, so the OpenRouter spelling cannot be reused.
+    """
+    return REQUESTY_DEFAULT_JEV_MODEL if is_requesty_endpoint(endpoint) else DEFAULT_JEV_MODEL
+
+
 def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
     """Build a :class:`Settings` from ``ctx.get_config`` (or from no config at all)."""
     read = get_config if callable(get_config) else (lambda _key, default=None: default)
@@ -295,10 +344,17 @@ def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
     raw_grid = read("grid", None)
     grid = parse_grid(raw_grid) if raw_grid else tuple(DEFAULT_GRID)
 
+    endpoint = resolve_endpoint(_as_text(read("endpoint", DEFAULT_ENDPOINT), DEFAULT_ENDPOINT))
+    jev_model = _as_text(read("jev_model", DEFAULT_JEV_MODEL), DEFAULT_JEV_MODEL)
+    if is_requesty_endpoint(endpoint) and jev_model == DEFAULT_JEV_MODEL:
+        # The OpenRouter spelling is not a model Requesty serves; only override the *default*,
+        # so a deliberately pinned id is left alone (and reports its own 404 if it is wrong).
+        jev_model = REQUESTY_DEFAULT_JEV_MODEL
+
     settings = Settings(
         enabled=_as_bool(read("enabled", True), True),
-        jev_model=_as_text(read("jev_model", DEFAULT_JEV_MODEL), DEFAULT_JEV_MODEL),
-        endpoint=_as_text(read("endpoint", DEFAULT_ENDPOINT), DEFAULT_ENDPOINT),
+        jev_model=jev_model,
+        endpoint=endpoint,
         confidence_threshold=_as_float(
             read("confidence_threshold", DEFAULT_CONFIDENCE_THRESHOLD),
             DEFAULT_CONFIDENCE_THRESHOLD,
@@ -320,22 +376,32 @@ def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
     return settings
 
 
-def api_key() -> str:
-    """The decision-endpoint key, from the environment only.
+def api_key(endpoint: str = "") -> str:
+    """The key for ``endpoint``, from the environment only.
 
-    Never read from ``config.yaml`` and never returned anywhere it could be logged.
-    Requesty (2026-10-20 cutover) takes precedence; OpenRouter remains the fallback
-    for hosts still pointed at the OpenRouter Decisions surface.
+    Never read from ``config.yaml`` and never returned anywhere it could be logged. The key is
+    chosen by endpoint host, because the two Decisions surfaces authenticate separately:
+    Requesty's ``/v1/systemone`` wants ``REQUESTY_API_KEY`` and OpenRouter's
+    ``/api/alpha/decisions`` wants ``OPENROUTER_API_KEY``. An unknown/self-hosted endpoint gets
+    Requesty first, then OpenRouter, preserving the 2026-10-20 cutover precedence.
     """
+    host = endpoint_host(endpoint)
+    if "requesty" in host:
+        return (os.environ.get("REQUESTY_API_KEY") or "").strip()
+    if "openrouter" in host:
+        return (os.environ.get("OPENROUTER_API_KEY") or "").strip()
     return (os.environ.get("REQUESTY_API_KEY") or os.environ.get("OPENROUTER_API_KEY") or "").strip()
 
 
 def redact(value: Any, limit: int = 200) -> str:
     """Render a value for a log line with any credential-looking substring removed."""
     text = str(value)
-    key = api_key()
-    if key:
-        text = text.replace(key, "[REDACTED]")
+    # Scrub every configured decision key, not just the one this endpoint selects: a log line
+    # may quote a body produced while the other surface was active (or a key rotated mid-run).
+    for key in {os.environ.get("REQUESTY_API_KEY"), os.environ.get("OPENROUTER_API_KEY")}:
+        key = (key or "").strip()
+        if key:
+            text = text.replace(key, "[REDACTED]")
     if len(text) > limit:
         text = text[:limit] + "..."
     return text

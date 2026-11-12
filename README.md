@@ -9,10 +9,11 @@ level is a session setting, so a two-line question and a gnarly refactor both pa
 last chose. This plugin makes it per-turn: Jev reads the task, picks the model and the effort for that
 turn, and the request goes out rewritten.
 
-**That combination is the whole point, and it is why this plugin exists separately from the others.**
-Every other routing entry in the catalog picks a **model** and stops there. The only entries that touch
-reasoning effort make you move it **by hand** from the status bar. Nothing else decides both
-automatically, per turn.
+**That combination is the point.** Most routing entries in the catalog decide one half — a
+model, or an effort level. This one decides both on every turn, and it is built to be
+audited rather than trusted: the grid was measured against task families, a confidence
+guard degrades weak answers, and every route (or skip) is recorded so you can see what
+actually served the turn.
 
 **Scope: this plugin is for Hermes running on Ollama:Cloud.** Its whole routing grid is six Ollama:Cloud
 models, the per-family effort table is written for Ollama:Cloud's reasoning-effort vocabulary, and the
@@ -77,18 +78,30 @@ hermes plugins install AlphaPerseii3000/jev-effort-router --force
 
 To skip the scan entirely for this repository, set `plugins.scan_on_install` in your Hermes config.
 
-Then set the key Jev is reached with — OpenRouter serves the Decisions API, so no separate TypeSafe
-credential is needed:
+Then set the key for the Decisions surface you use. The endpoint follows the key, because the
+two surfaces are different APIs and do not share credentials:
+
+| Key | Endpoint | Default Jev model |
+|---|---|---|
+| `REQUESTY_API_KEY` | `https://router.requesty.ai/v1/systemone` | `typesafe/jev-1.14.0` |
+| `OPENROUTER_API_KEY` | `https://openrouter.ai/api/alpha/decisions` | `typesafe/jev-1.13` |
 
 ```bash
-# in the Hermes .env file
+# in the Hermes .env file — set one, not both
+REQUESTY_API_KEY=rq-...
+# or
 OPENROUTER_API_KEY=sk-or-...
 ```
+
+Requesty wins when both are present (the 2026-10-20 cutover). A self-hosted proxy can set
+`endpoint` explicitly under the plugin settings; that key is deliberately not exposed as a form
+field because the two hosted surfaces are the supported paths.
 
 Restart the session. That is the whole setup: the six-model grid ships as the default.
 
 Requirements: **Hermes Agent on Ollama:Cloud** (`provider: ollama-cloud` — no other provider is routed),
-with the `llm_request` middleware kind (0.21.4 or newer), Python 3.11+, and prepaid OpenRouter credits.
+with the `llm_request` middleware kind (0.21.4 or newer), Python 3.11+, and prepaid credits on
+Requesty or OpenRouter.
 
 ## Verify it is working
 
@@ -139,7 +152,7 @@ form generated from `plugin.yaml`.
 | Setting | Default | Meaning |
 |---|---|---|
 | `enabled` | `true` | Master switch. Off registers the plugin but never rewrites a request. |
-| `jev_model` | `typesafe/jev-1.13` | Decision model. `typesafe/jev-latest` follows the newest release. |
+| `jev_model` | `typesafe/jev-1.13` (OpenRouter) / `typesafe/jev-1.14.0` (Requesty) | Decision model. `typesafe/jev-latest` follows the newest release. |
 | `confidence_threshold` | `0.5` | Below this, the turn keeps the configured model and effort. |
 | `timeout_s` | `2.0` | Budget for the decision call. Any timeout leaves the request untouched. |
 | `default_model` | `glm-5.3-flash` | Model used when the decision is below threshold. |

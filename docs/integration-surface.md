@@ -109,9 +109,11 @@ which it does for the recent-context window (a bounded tail, never the whole tra
 - `ctx.llm` → out-of-band model access; **not used** here (Jev is a plain HTTP call, and using `ctx.llm`
   to call a decision endpoint would be the wrong abstraction)
 
-The API key is read from the process environment at call time and never from `config.yaml`; it is never
-logged and never included in an audit record. `OPENROUTER_API_KEY` is treated as an ambient requirement,
-and its absence is surfaced once at registration.
+The decision-endpoint key is read from the process environment at call time and never from
+`config.yaml`; it is never logged and never included in an audit record. `REQUESTY_API_KEY` and
+`OPENROUTER_API_KEY` are both ambient requirements for their respective endpoints (Requesty's
+`/v1/systemone`, OpenRouter's `/api/alpha/decisions`); the endpoint is selected from whichever key
+is present, and its absence is surfaced once at registration.
 
 ## Verification surface
 

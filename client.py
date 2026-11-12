@@ -151,7 +151,7 @@ class JevClient:
 
     def _post(self, payload: Dict[str, Any]) -> Tuple[Optional[Any], Optional[str]]:
         headers = {
-            "Authorization": f"Bearer {api_key()}",
+            "Authorization": f"Bearer {api_key(self._settings.endpoint)}",
             "Content-Type": "application/json",
             # Ranking headers are optional; they make the traffic identifiable on OpenRouter.
             "X-Title": "hermes-jev-effort-router",
@@ -207,7 +207,7 @@ class JevClient:
         Telling Jev what is configured defeats the purpose of asking it.
         """
         settings = self._settings
-        if not api_key():
+        if not api_key(settings.endpoint):
             return None, REASON_NO_API_KEY
 
         payload = build_payload(
