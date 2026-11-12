@@ -15,15 +15,24 @@ from typing import Any, Callable, Dict, Mapping, Optional, Sequence, Tuple
 from urllib.parse import urlsplit
 
 from .grid import DEFAULT_GRID, Entry, parse_grid, parse_grid_strict
+from .profiles import (
+    DEFAULT_PROVIDER,
+    ProviderProfile,
+    builtin_profile,
+    normalize_provider,
+    parse_provider_profiles,
+)
 
-#: Provider profile this router is benchmarked for. Anything else is skipped untouched.
-ROUTED_PROVIDER = "ollama-cloud"
+#: Provider profile this router is benchmarked for. Anything else is skipped unless the operator
+#: declared a profile for it. Kept as the default profile's name and the compatibility constant.
+ROUTED_PROVIDER = DEFAULT_PROVIDER
 
 #: Provider profile name aliases that also count as routed.
-ROUTED_PROVIDER_ALIASES = ("ollama_cloud",)
+ROUTED_PROVIDER_ALIASES = ("ollama_cloud", "ollama")
 
-#: API modes this router understands. The Ollama:cloud profile is chat_completions;
-#: a Responses or Anthropic-Messages route builds its payload elsewhere and is left alone.
+#: API modes this router understands. Phase 1 covers ``chat_completions`` providers (the built-in
+#: Ollama:Cloud profile and operator-declared profiles alike); a Responses or Anthropic-Messages
+#: route builds its payload elsewhere and is left alone.
 ROUTED_API_MODES = ("chat_completions",)
 
 EFFORT_LEVELS: Tuple[str, ...] = ("low", "medium", "high")
@@ -170,6 +179,12 @@ class EffectiveSettings:
         return _entry_for(self.grid, model_id)
 
 
+def _builtin_profiles() -> Mapping[str, ProviderProfile]:
+    """The shipped profile map: exactly one provider, the measured one."""
+    profile = builtin_profile(DEFAULT_GRID, DEFAULT_MODEL)
+    return MappingProxyType({profile.name: profile})
+
+
 @dataclass(frozen=True)
 class Settings:
     """Immutable snapshot of the plugin's effective settings."""
@@ -191,6 +206,11 @@ class Settings:
     platform_overrides: Mapping[str, PlatformPolicy] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    #: Provider name → slot mapping. Always contains the built-in ``ollama-cloud`` profile; an
+    #: operator profile for another provider is what makes that provider routable.
+    provider_profiles: Mapping[str, ProviderProfile] = field(
+        default_factory=_builtin_profiles
+    )
 
     def __hash__(self) -> int:
         """Hash the snapshot, treating the read-only mapping as its frozenset of items.
@@ -205,12 +225,24 @@ class Settings:
             value = getattr(self, spec.name)
             if spec.name == "platform_overrides":
                 value = frozenset(value.items())
+            elif spec.name == "provider_profiles":
+                value = frozenset(value.items())
             parts.append((spec.name, value))
         return hash(tuple(parts))
 
     @property
     def grid_ids(self) -> Tuple[str, ...]:
         return tuple(entry.model_id for entry in self.grid)
+
+    def profile_for(self, provider: str = "") -> Optional[ProviderProfile]:
+        """The profile for ``provider``, or ``None`` when that provider is not routed.
+
+        An empty provider (some host paths do not pass one) resolves to the default profile.
+        Unknown providers are *not* silently mapped onto the default profile: that would send
+        Ollama model ids to another provider's API and turn a skip into a 404.
+        """
+        key = normalize_provider(provider) or DEFAULT_PROVIDER
+        return self.provider_profiles.get(key)
 
     def entry_for(self, model_id: str) -> Optional[Entry]:
         return _entry_for(self.grid, model_id)
@@ -220,22 +252,29 @@ class Settings:
         key = (platform or "").strip().lower()
         return self.platform_overrides.get(key)
 
-    def effective(self, policy: Optional[PlatformPolicy]) -> EffectiveSettings:
-        """Resolve one frozen snapshot, applying ``policy`` over the global settings.
+    def effective(
+        self, policy: Optional[PlatformPolicy], provider: str = ""
+    ) -> EffectiveSettings:
+        """Resolve one frozen snapshot, applying ``policy`` over the active provider profile.
 
-        A policy field of ``None`` inherits the global value; a policy ``grid`` that did not
-        parse also inherits, so a bad policy grid never replaces the operator's global grid.
+        A policy field of ``None`` inherits the profile value; a policy ``grid`` that did not
+        parse also inherits, so a bad policy grid never replaces the operator's grid. The
+        fallback model comes from the profile, not from the global setting: a provider profile
+        declares a model it actually serves.
         """
+        profile = self.profile_for(provider) or self.profile_for(DEFAULT_PROVIDER)
+        base_grid = profile.entries if profile is not None else self.grid
+        fallback = profile.fallback_model if profile is not None else self.default_model
         if policy is None:
             return EffectiveSettings(
-                grid=self.grid,
+                grid=base_grid,
                 confidence_threshold=self.confidence_threshold,
-                default_model=self.default_model,
+                default_model=fallback,
                 default_effort=self.default_effort,
                 max_effort=None,
                 grid_from_policy=False,
             )
-        grid = policy.grid if policy.grid is not None else self.grid
+        grid = policy.grid if policy.grid is not None else base_grid
         threshold = (
             policy.confidence_threshold
             if policy.confidence_threshold is not None
@@ -244,7 +283,7 @@ class Settings:
         return EffectiveSettings(
             grid=grid,
             confidence_threshold=threshold,
-            default_model=self.default_model,
+            default_model=fallback,
             default_effort=self.default_effort,
             max_effort=policy.max_effort,
             grid_from_policy=policy.grid is not None,
@@ -343,6 +382,15 @@ def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
 
     raw_grid = read("grid", None)
     grid = parse_grid(raw_grid) if raw_grid else tuple(DEFAULT_GRID)
+    default_model = _as_text(read("default_model", DEFAULT_MODEL), DEFAULT_MODEL)
+
+    # The default profile is the measured grid (or the operator's `grid` override). A
+    # `provider_profiles` entry for the same provider is more specific and wins; every other
+    # provider is routable only because the operator declared a profile for it.
+    configured_profiles = parse_provider_profiles(read("provider_profiles", None))
+    profiles: Dict[str, ProviderProfile] = dict(configured_profiles)
+    profiles.setdefault(DEFAULT_PROVIDER, builtin_profile(grid, default_model))
+    default_profile = profiles[DEFAULT_PROVIDER]
 
     endpoint = resolve_endpoint(_as_text(read("endpoint", DEFAULT_ENDPOINT), DEFAULT_ENDPOINT))
     jev_model = _as_text(read("jev_model", DEFAULT_JEV_MODEL), DEFAULT_JEV_MODEL)
@@ -361,7 +409,7 @@ def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
             minimum=0.0,
         ),
         timeout_s=_as_float(read("timeout_s", DEFAULT_TIMEOUT_S), DEFAULT_TIMEOUT_S, minimum=0.05),
-        default_model=_as_text(read("default_model", DEFAULT_MODEL), DEFAULT_MODEL),
+        default_model=default_profile.fallback_model,
         default_effort=_as_choice(read("default_effort", DEFAULT_EFFORT), EFFORT_LEVELS, DEFAULT_EFFORT),
         context_turns=_as_int(
             read("context_turns", DEFAULT_CONTEXT_TURNS), DEFAULT_CONTEXT_TURNS, minimum=0, maximum=50
@@ -370,8 +418,9 @@ def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
         audit_enabled=_as_bool(read("audit_enabled", True), True),
         log_skips=_as_bool(read("log_skips", True), True),
         include_user_message_in_audit=_as_bool(read("include_user_message_in_audit", False), False),
-        grid=grid,
+        grid=default_profile.entries,
         platform_overrides=parse_platform_overrides(read("platform_overrides", None)),
+        provider_profiles=MappingProxyType(profiles),
     )
     return settings
 

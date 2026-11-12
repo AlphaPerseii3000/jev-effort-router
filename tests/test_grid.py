@@ -70,6 +70,14 @@ def test_parse_entry_accepts_string_and_mapping():
     assert parse_entry(None) is None
 
 
+def test_parse_entry_keeps_a_colon_that_belongs_to_the_model_id():
+    # The separator is ": ", not the first colon: `nemotron-3-nano:30b` is one wire id.
+    assert parse_entry("nemotron-3-nano:30b") == Entry("nemotron-3-nano:30b", "")
+    assert parse_entry("nemotron-3-nano:30b: trivial work") == Entry(
+        "nemotron-3-nano:30b", "trivial work"
+    )
+
+
 def test_parse_grid_falls_back_to_default_on_nonsense():
     assert parse_grid(None) == DEFAULT_GRID
     assert parse_grid([]) == DEFAULT_GRID

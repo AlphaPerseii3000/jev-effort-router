@@ -20,11 +20,14 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import Any, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 logger = logging.getLogger(__name__)
 
-#: Hermes' provider-model cache, relative to the active HERMES_HOME.
+#: Hermes' per-provider model cache filenames, relative to the active HERMES_HOME.
+#: The generic file is keyed by provider; the per-provider file is the older shape and stays as a
+#: compatibility fallback (``ollama_cloud_models_cache.json`` is what 0.3.x read).
+PROVIDER_CACHE_FILENAME = "provider_models_cache.json"
 CACHE_FILENAME = "ollama_cloud_models_cache.json"
 
 #: How long a read of the cache is reused before re-reading. The file is small and rewritten
@@ -66,6 +69,26 @@ def _model_ids(payload: Any) -> Tuple[str, ...]:
     return tuple(found)
 
 
+def _provider_slug(provider: str) -> str:
+    """``ollama-cloud`` -> ``ollama_cloud``, the spelling Hermes uses in cache filenames."""
+    return (provider or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _provider_payload(payload: Any, provider: str) -> Any:
+    """The provider's slice of a generic ``provider_models_cache.json``, or the payload itself.
+
+    The generic file is ``{provider: {"models": [...]}}``. A legacy per-provider file is already
+    the inner shape, so an absent provider key leaves the payload untouched and ``_model_ids``
+    reads it as before.
+    """
+    if not isinstance(payload, dict):
+        return payload
+    for key in (provider, provider.replace("-", "_"), provider.replace("_", "-")):
+        if key and isinstance(payload.get(key), dict):
+            return payload[key]
+    return payload
+
+
 class ModelCatalog:
     """A lazily-read, briefly-cached view of the provider's model list."""
 
@@ -73,54 +96,77 @@ class ModelCatalog:
         self,
         cache_path: Optional[Path] = None,
         *,
+        provider: str = "",
         ttl_s: float = DEFAULT_TTL_S,
         clock=time.monotonic,
     ) -> None:
         self._cache_path = cache_path
+        self._default_provider = (provider or "").strip().lower()
         self._ttl_s = max(0.0, float(ttl_s))
         self._clock = clock
-        self._models: Optional[Tuple[str, ...]] = None
-        self._read_at: Optional[float] = None
+        # Keyed by provider: one router instance serves every profile, and a status call may ask
+        # about a provider other than the one the current turn is using.
+        self._models: Dict[str, Optional[Tuple[str, ...]]] = {}
+        self._read_at: Dict[str, float] = {}
 
     # -- reading -----------------------------------------------------------------
 
-    def _path(self) -> Optional[Path]:
+    def _paths(self, provider: str) -> Tuple[Path, ...]:
         if self._cache_path is not None:
-            return self._cache_path
+            return (self._cache_path,)
         home = _hermes_home()
-        return home / CACHE_FILENAME if home else None
+        if home is None:
+            return ()
+        paths = [home / PROVIDER_CACHE_FILENAME]
+        slug = _provider_slug(provider)
+        if slug:
+            paths.append(home / f"{slug}_models_cache.json")
+        return tuple(dict.fromkeys(paths))
 
-    def _fresh(self) -> bool:
-        if self._models is None or self._read_at is None:
+    def _fresh(self, provider: str) -> bool:
+        if provider not in self._models or provider not in self._read_at:
             return False
-        return (self._clock() - self._read_at) < self._ttl_s
+        return (self._clock() - self._read_at[provider]) < self._ttl_s
 
-    def models(self) -> Optional[Tuple[str, ...]]:
+    def models(self, provider: str = "") -> Optional[Tuple[str, ...]]:
         """The provider's model ids, or ``None`` when there is no usable evidence."""
-        if self._fresh():
-            return self._models
-        path = self._path()
+        key = (provider or self._default_provider or "ollama-cloud").strip().lower()
+        if self._fresh(key):
+            return self._models[key]
         models: Optional[Tuple[str, ...]] = None
-        if path is not None:
+        for path in self._paths(key):
             try:
-                models = _model_ids(json.loads(path.read_text(encoding="utf-8"))) or None
+                payload = json.loads(path.read_text(encoding="utf-8"))
+                models = _model_ids(_provider_payload(payload, key)) or None
             except Exception as exc:  # noqa: BLE001 - a missing/garbled cache is not a failure
-                logger.debug("jev-effort-router: provider catalog unavailable (%s: %s)", type(exc).__name__, exc)
+                logger.debug(
+                    "jev-effort-router: provider catalog unavailable (%s: %s)",
+                    type(exc).__name__,
+                    exc,
+                )
                 models = None
-        self._models = models
-        self._read_at = self._clock()
+            if models:
+                break
+        self._models[key] = models
+        self._read_at[key] = self._clock()
         return models
 
     # -- the question the router asks --------------------------------------------
 
-    def is_known(self, model_id: str, provider_prefixes: Sequence[str] = ()) -> Optional[bool]:
+    def is_known(
+        self,
+        model_id: str,
+        provider_prefixes: Sequence[str] = (),
+        *,
+        provider: str = "",
+    ) -> Optional[bool]:
         """``True``/``False`` when the catalog can answer, ``None`` when it cannot.
 
         A model matches either exactly or through one of ``provider_prefixes`` (a catalog entry
         namespaced as ``vendor/model``), so a grid entry naming the bare id is not judged absent
         for a formatting difference.
         """
-        models = self.models()
+        models = self.models(provider)
         if not models:
             return None
         wanted = (model_id or "").strip()

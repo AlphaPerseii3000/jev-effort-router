@@ -1,8 +1,10 @@
 # Provider profiles — routing beyond Ollama:Cloud (RFC)
 
-**Status: proposal. Nothing in this document is implemented.** The shipped plugin still routes
-`ollama-cloud` only, and every other provider passes through untouched. This is the design we would
-build, and the questions that need an answer before it is worth building.
+**Status: phase 1 is implemented in 0.4.0.** Capability slots, `provider_profiles`, the provider
+gate and the per-provider catalog check are shipped, with the Ollama:Cloud identity regression. The
+shipped profile is still Ollama:Cloud; another `chat_completions` provider is routable only when an
+operator declares a profile for it. Effort delegation, the switching policy and the later adapters
+below are still proposals.
 
 ## Why this is the next step
 
@@ -39,8 +41,8 @@ So: **within-provider routing, provider-agnostic mechanism, evidence-gated defau
 Today Jev chooses a *model id* from a six-entry list, and that list is also the mapping to the wire.
 Those two jobs have to be separated.
 
-Introduce six **capability slots**. The criteria text is the one already measured and must not
-change, or the 0.2.1 measurements stop applying:
+Introduce six **capability slots** (`SLOTS` in `grid.py`, shipped in 0.4.0). The criteria text is the
+one already measured and must not change, or the 0.2.1 measurements stop applying:
 
 | Slot | Criterion sent to Jev (unchanged) | Ollama:Cloud mapping |
 |---|---|---|
@@ -136,13 +138,14 @@ which is still the half of the plugin no model router offers.
   current public surface and must keep working.
 - `provider_profiles` is additive. Absent, the built-in Ollama:Cloud profile is used, with the same
   six entries in the same order and the same criteria. No config migration.
-- The provider gate becomes "is there a profile for this provider?" instead of
+- The provider gate is "is there a profile for this provider?" instead of
   `provider == "ollama-cloud"`. Unknown provider still means skip, with the existing audit reason.
-- `default_model` becomes profile-aware. On Ollama:Cloud it stays `glm-5.3-flash`; a profile declares
-  its own on-grid fallback, and the parser refuses a fallback that is not one of its slots.
-- Catalog check moves from `ollama_cloud_models_cache.json` to
-  `provider_models_cache.json[provider].models`, with the per-provider file as a compatibility
-  fallback. No cache evidence still means "trust the decision", as today.
+- `default_model` is profile-aware. On Ollama:Cloud it stays `glm-5.3-flash`; a profile declares its
+  own on-grid fallback, and a fallback that is not one of its models resolves to the profile's
+  general slot (or its first entry) rather than being sent off-grid.
+- The catalog check reads `provider_models_cache.json[provider].models`, with the per-provider file
+  (`ollama_cloud_models_cache.json`) as a compatibility fallback. No cache evidence still means
+  "trust the decision", as today.
 
 ## Tests
 
@@ -170,14 +173,14 @@ Nothing here needs a live provider: provider profiles and transports are stub se
 | Phase | Scope | Ships? |
 |---|---|---|
 | 0 | This RFC + a tracking issue; collect operator profiles | docs only |
-| 1 | Slots + `provider_profiles` + provider gate + catalog + `per_turn`; Ollama identity regression | yes, no behaviour change |
+| 1 | Slots + `provider_profiles` + provider gate + catalog + `per_turn`; Ollama identity regression | **shipped in 0.4.0**, no default behaviour change |
 | 2 | Effort delegation to host profiles + `effort_only` / `per_session`; one measured profile (OpenRouter or Z.AI) | yes, opt-in |
 | 3 | Anthropic Messages / Responses adapters | only if phase 2 shows demand |
 | 4 | Cache-aware policy from real usage counters | only with measurement |
 
-Phase 1 is the expensive one (roughly a day of code plus the regression matrix); phase 2 is where the
-provider-specific evidence has to be earned, and where the project's existing rule applies: a model
-enters a shipped profile only with benchmark evidence, not because its name fits a slot.
+Phase 1 shipped in 0.4.0; phase 2 is where the provider-specific evidence has to be earned, and where
+the project's existing rule applies: a model enters a shipped profile only with benchmark evidence,
+not because its name fits a slot.
 
 ## Open questions
 
@@ -190,6 +193,6 @@ enters a shipped profile only with benchmark evidence, not because its name fits
 3. **Which provider first?** OpenRouter is the broadest and already serves the decision endpoint;
    Z.AI is the closest to the existing GLM measurements. Recommendation: OpenRouter for reach, Z.AI
    for a cheaper, measurable benchmark.
-4. **Does a shipped profile need its own benchmark table**, or is "operator-supplied, validated
-   against the provider catalog" enough for phase 1? Recommendation: the latter; shipped profiles
-   wait for evidence.
+4. **Does a shipped profile need its own benchmark table?** Answered for phase 1: an operator-supplied
+   profile validated against the provider catalog is enough, and no built-in profile ships without
+   evidence. Still open for phase 2: whether to ship a *measured* OpenRouter or Z.AI profile.

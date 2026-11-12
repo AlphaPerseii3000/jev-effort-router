@@ -15,12 +15,13 @@ audited rather than trusted: the grid was measured against task families, a conf
 guard degrades weak answers, and every route (or skip) is recorded so you can see what
 actually served the turn.
 
-**Scope: this plugin is for Hermes running on Ollama:Cloud.** Its whole routing grid is six Ollama:Cloud
-models, the per-family effort table is written for Ollama:Cloud's reasoning-effort vocabulary, and the
-middleware routes **only** the `ollama-cloud` provider — every other provider passes through untouched, so
-installing it on another provider changes nothing. You need Hermes on `provider: ollama-cloud`, with that
-provider's catalog reachable, for this plugin to have any effect. The provider-agnostic design is an
-open RFC, not a shipped feature: [`docs/provider-profiles.md`](docs/provider-profiles.md).
+**Scope: the shipped profile is Ollama:Cloud.** It maps the six measured capability slots to six
+Ollama:Cloud models, and its effort table is written for Ollama:Cloud's reasoning-effort vocabulary.
+The router touches a provider only when a profile exists for it: `ollama-cloud` ships built in, and
+`provider_profiles` can add another **chat_completions** provider. It never switches providers — a
+middleware cannot open a second provider client, and Hermes core already owns provider fallback. A
+provider without a profile passes through untouched. See
+[`docs/provider-profiles.md`](docs/provider-profiles.md) for the boundary and the later phases.
 
 Hermes normally runs one model at one reasoning-effort for a whole session. `jev-effort-router` asks Jev —
 on every user turn, in ~270 ms and at $0.042/M input tokens — which of six benchmarked Ollama:cloud models
@@ -100,9 +101,9 @@ field because the two hosted surfaces are the supported paths.
 
 Restart the session. That is the whole setup: the six-model grid ships as the default.
 
-Requirements: **Hermes Agent on Ollama:Cloud** (`provider: ollama-cloud` — no other provider is routed),
-with the `llm_request` middleware kind (0.21.4 or newer), Python 3.11+, and prepaid credits on
-Requesty or OpenRouter.
+Requirements: **Hermes Agent on Ollama:Cloud** (the shipped profile), or on another
+`chat_completions` provider with a `provider_profiles` entry; with the `llm_request` middleware kind
+(0.21.4 or newer), Python 3.11+, and prepaid credits on Requesty or OpenRouter.
 
 ## Verify it is working
 
@@ -163,7 +164,8 @@ form generated from `plugin.yaml`.
 | `audit_enabled` | `true` | Append one JSONL record per turn under the plugin data directory. |
 | `log_skips` | `true` | Record why a turn was left unrouted. |
 | `include_user_message_in_audit` | `false` | Off keeps conversation content out of the audit. |
-| `grid` | `null` | Optional `["model-id: description", ...]` replacing the built-in grid. |
+| `grid` | `null` | Optional `["model-id: description", ...]` replacing the built-in six-model grid (default profile only). |
+| `provider_profiles` | `null` | Optional map of provider name to a slot→model profile. See below. |
 | `platform_overrides` | `null` | Optional map of platform to settings overrides (`enabled`, `grid`, `confidence_threshold`, `max_effort`). |
 
 ### Per-surface routing policy (`platform_overrides`)
@@ -206,9 +208,10 @@ confidence below the threshold, an unknown provider, or a model outside the grid
 
 Notably, it touches only what it owns:
 
-- **Provider** — only `ollama-cloud` is routed; any other provider passes through untouched.
+- **Provider** — a provider with no declared profile is not routed; its requests pass through
+  untouched. The shipped profile is `ollama-cloud`.
 - **API mode** — only `chat_completions`; a Responses or Anthropic-Messages route is left alone.
-- **Model** — a model outside the configured grid is not routed.
+- **Model** — a model outside the active profile's grid is not routed.
 - **Auxiliary calls** — titling, compression, MoA and vision calls are not routed, only the main turn.
 
 ### One decision per user turn
@@ -243,12 +246,62 @@ carrying one absorbs decisions that belong to the others. That is what kept `glm
 | 6 | `nemotron-3-nano:30b` | highest throughput and lowest cost: trivial single-step requests only; weak at reasoning and at long context |
 
 Adding a model is a reviewed change to [`docs/routing-grid.md`](docs/routing-grid.md) with benchmark
-evidence behind it — not a config-only act. See that file for the benchmark sources and pricing.
+evidence behind it — not a config-only act. See that file for the benchmark sources and pricing. The
+table above is the **built-in** profile; another provider's profile is operator-supplied (above)
+until a benchmark for that provider exists. No profile ships on the strength of a model name.
 
-Model ids are checked against Ollama:Cloud's own catalog before they go on the wire: `status` reports any
-grid entry the provider no longer serves under `grid_unavailable`, and a decision naming one is refused
-rather than sent. A provider catalog naming a model the grid does not offer is not added automatically —
-extending the grid stays a reviewed change.
+Model ids are checked against the active provider's own catalog before they go on the wire: `status`
+reports any default-profile entry the provider no longer serves under `grid_unavailable`, and a
+decision naming one is refused rather than sent. A provider catalog naming a model the profile does
+not offer is not added automatically — extending a shipped profile stays a reviewed change.
+
+### Provider profiles
+
+A profile maps the six capability slots to one model on that provider. The slot order and the
+criterion descriptions are the measured payload; a profile changes only the model ids, not what Jev
+is asked.
+
+```yaml
+plugins:
+  entries:
+    jev-effort-router:
+      settings:
+        provider_profiles:
+          openrouter:
+            models:
+              general: <wire-model-id>
+              deep-code: <wire-model-id>: optional description
+              rigorous: <wire-model-id>
+              long-text: <wire-model-id>
+              tool-throughput: <wire-model-id>
+              trivial: <wire-model-id>
+            fallback: <wire-model-id>
+```
+
+Rules and limits:
+
+- The provider key is Hermes' provider name (`openrouter`, `zai`, …). `ollama-cloud` ships built in
+  and can be overridden by declaring it here.
+- Model ids are **wire ids**, checked against `provider_models_cache.json[provider].models`. A model
+  the catalog proves absent is refused, the turn keeps the configured model, and the audit records
+  `model_not_in_provider_catalog`. No catalog evidence means "trust the decision", as before.
+- A fallback that is not one of the profile's models resolves to the `general` slot (or the first
+  entry), never to an off-grid id.
+- Only `chat_completions` providers are routed. Phase 1 keeps the top-level `reasoning_effort` wire
+  field unchanged; provider-specific effort translation is phase 2, so a provider whose API expects
+  a different spelling should wait for it.
+- Routing stays inside the active provider. A profile does not switch providers; Hermes core owns
+  provider fallback.
+- On a cache-priced provider, set `route_per_turn: false` (or wait for the cache-aware policy in
+  phase 2). Changing model on every user turn invalidates the prompt cache, and that miss can cost
+  more than the model delta.
+
+`status` lists every profile with its slot mapping, and the CLI can exercise one without running a
+turn:
+
+```bash
+hermes jev-effort-router route --provider openrouter "refactor the payment module"
+```
 
 ### Reasoning effort per model family
 

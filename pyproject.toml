@@ -1,7 +1,7 @@
 [project]
 name = "hermes-plugin-jev-effort-router"
 version = "0.3.2"
-description = "Hermes plugin — route each user turn to an Ollama:cloud model and reasoning effort via TypeSafe Jev."
+description = "Hermes plugin — route each user turn to the best model and reasoning effort via TypeSafe Jev; ships an Ollama:Cloud profile and accepts operator-declared provider profiles."
 requires-python = ">=3.11"
 license = { text = "MIT" }
 dependencies = [

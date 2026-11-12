@@ -15,7 +15,7 @@ import json
 from typing import Any, Callable, Dict, List, Tuple
 
 from .client import JevClient
-from .config import Settings, api_key
+from .config import DEFAULT_PROVIDER, Settings, api_key, normalize_provider
 from .state import build_questions, build_state
 
 STATUS_SCHEMA = {
@@ -40,9 +40,9 @@ STATUS_SCHEMA = {
 ROUTE_SCHEMA = {
     "name": "jev_effort_router_route",
     "description": (
-        "Ask the Jev decision model which Ollama:cloud model and reasoning effort it would "
-        "choose for a given task description, without changing the current session. Use it to "
-        "test the routing grid, or to show the user what the router would pick. Returns the "
+        "Ask the Jev decision model which model and reasoning effort it would choose for a "
+        "given task description, without changing the current session. Use it to test a "
+        "provider's routing grid, or to show the user what the router would pick. Returns the "
         "choice, its probabilities, the confidence, and the alternatives."
     ),
     "parameters": {
@@ -55,6 +55,13 @@ ROUTE_SCHEMA = {
             "context": {
                 "type": "string",
                 "description": "Optional recent context to help the decision.",
+            },
+            "provider": {
+                "type": "string",
+                "description": (
+                    "Optional provider profile to route against (for example openrouter). "
+                    "Defaults to ollama-cloud."
+                ),
             },
         },
         "required": ["task"],
@@ -105,6 +112,12 @@ def _grid_coverage(router, settings: Settings, sample: int = GRID_COVERAGE_SAMPL
     except Exception:  # noqa: BLE001 - an observability surface never raises
         return {}
     counted = [r for r in records if r.get("event") == "route" and not r.get("replayed")]
+    # The coverage table is about the default profile's grid. Routes on an operator-declared
+    # provider would otherwise count their models as unknown here and inflate `never_chosen`.
+    counted = [
+        record for record in counted
+        if normalize_provider(record.get("provider")) in ("", DEFAULT_PROVIDER)
+    ]
     if not counted:
         return {}
 
@@ -146,8 +159,33 @@ def _grid_coverage(router, settings: Settings, sample: int = GRID_COVERAGE_SAMPL
     return report
 
 
+def _profile_rows(settings: Settings) -> list:
+    """The declared provider profiles, default first, with their slot → model mapping.
+
+    A profile is the unit an operator edits; showing only the default grid hides the fact that
+    another provider is routed, and showing only model ids hides which capability slot each one
+    was chosen for.
+    """
+    profiles = sorted(
+        settings.provider_profiles.values(),
+        key=lambda profile: (profile.name != DEFAULT_PROVIDER, profile.name),
+    )
+    return [
+        {
+            "provider": profile.name,
+            "source": profile.source,
+            "fallback": profile.fallback_model,
+            "slots": {
+                slot: entry.model_id for slot, entry in zip(profile.slots, profile.entries)
+            },
+        }
+        for profile in profiles
+    ]
+
+
 def _status(router, settings: Settings, recent: int = 5) -> str:
     records = router.tail(settings, limit=max(1, min(int(recent or 5), 50)))
+    default_profile = settings.profile_for("") or settings.profile_for(DEFAULT_PROVIDER)
     payload = {
         "enabled": settings.enabled,
         "api_key_present": bool(api_key()),
@@ -156,10 +194,12 @@ def _status(router, settings: Settings, recent: int = 5) -> str:
         "confidence_threshold": settings.confidence_threshold,
         "timeout_s": settings.timeout_s,
         "route_per_turn": settings.route_per_turn,
+        "default_provider": default_profile.name if default_profile is not None else DEFAULT_PROVIDER,
         "fallback": {"model": settings.default_model, "effort": settings.default_effort},
         "grid": [
             {"model": entry.model_id, "profile": entry.description} for entry in settings.grid
         ],
+        "provider_profiles": _profile_rows(settings),
         "audit": {
             "enabled": settings.audit_enabled,
             "records": router.count(settings),
@@ -177,9 +217,22 @@ def _status(router, settings: Settings, recent: int = 5) -> str:
     return json.dumps(payload, ensure_ascii=False, indent=2)
 
 
-def _route(router, settings: Settings, task: str, context: str = "") -> str:
+def _route(
+    router, settings: Settings, task: str, context: str = "", provider: str = ""
+) -> str:
     if not str(task or "").strip():
         return json.dumps({"error": "task must not be empty"})
+    profile = settings.profile_for(provider)
+    if profile is None:
+        return json.dumps(
+            {
+                "routed": False,
+                "reason": "provider_not_routed",
+                "provider": provider,
+                "hint": "Declare this provider under provider_profiles before routing against it.",
+            },
+            ensure_ascii=False,
+        )
     messages = [{"role": "user", "content": str(task)}]
     if str(context).strip():
         messages = [
@@ -189,12 +242,13 @@ def _route(router, settings: Settings, task: str, context: str = "") -> str:
         ]
 
     decision, reason = router.client(settings).decide(
-        messages, settings.effective(None)
+        messages, settings.effective(None, profile.name)
     )
     if decision is None:
         return json.dumps(
             {
                 "routed": False,
+                "provider": profile.name,
                 "reason": reason,
                 "hint": _hint_for(reason),
             },
@@ -203,6 +257,7 @@ def _route(router, settings: Settings, task: str, context: str = "") -> str:
     return json.dumps(
         {
             "routed": True,
+            "provider": profile.name,
             "model": decision.model,
             "effort": decision.effort,
             "effort_requested": decision.effort_requested,
@@ -224,7 +279,7 @@ def _hint_for(reason: Any) -> str:
     from .client import REASON_NO_API_KEY, REASON_TIMEOUT, REASON_UPSTREAM_ERROR
 
     if reason == REASON_NO_API_KEY:
-        return "Set OPENROUTER_API_KEY in the Hermes .env file, then restart the session."
+        return "Set REQUESTY_API_KEY or OPENROUTER_API_KEY in the Hermes .env file, then restart the session."
     if reason == REASON_TIMEOUT:
         return "Jev did not answer inside the configured budget; raise timeout_s or retry."
     if reason == REASON_UPSTREAM_ERROR:
@@ -258,6 +313,7 @@ def build_tool_registrations(
             get_settings(),
             task=_arg(args, "task", ""),
             context=_arg(args, "context", ""),
+            provider=_arg(args, "provider", ""),
         )
 
     return [(STATUS_SCHEMA, status_handler), (ROUTE_SCHEMA, route_handler)]

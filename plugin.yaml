@@ -2,12 +2,12 @@ name: jev-effort-router
 version: 0.3.2
 manifest_version: 2
 api_version: 1
-description: Route each user turn to the best Ollama:Cloud model and reasoning effort via TypeSafe Jev's decision endpoint. Ollama:Cloud only — no other provider is routed.
+description: Route each user turn to the best model and reasoning effort via TypeSafe Jev's decision endpoint. Ships with an Ollama:Cloud profile; operator-declared provider_profiles add another chat_completions provider, and the router never switches providers.
 author: AlphaPerseii3000
 license: MIT
 requires_hermes: ">=0.21.4"
 homepage: https://github.com/AlphaPerseii3000/jev-effort-router
-tags: [routing, models, reasoning, ollama-cloud, decisions]
+tags: [routing, models, reasoning, ollama-cloud, decisions, provider-profiles]
 # ``provides_middleware`` is not in the host's ``_KNOWN_MANIFEST_FIELDS``, so declaring it emits an
 # "unknown manifest field(s) ignored" warning on every load. It is declared anyway, deliberately:
 # ``hermes plugins validate`` diffs the manifest against what ``register(ctx)`` actually wires and
@@ -99,6 +99,11 @@ config_schema:
     default: null
     label: Routing grid override
     description: 'Optional list of entries, each "model-id: description", replacing the built-in six-model grid.'
+  provider_profiles:
+    type: dict
+    default: null
+    label: Provider profiles
+    description: 'Optional map of provider name to {models: {slot: "model-id[: description]"}, fallback: "model-id"}. Slots are general, deep-code, rigorous, long-text, tool-throughput, trivial. Ollama:Cloud ships built in; a provider without a profile is left untouched.'
   platform_overrides:
     type: dict
     default: null

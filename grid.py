@@ -19,7 +19,7 @@ now cross-checks the grid against the provider's own model list before a decisio
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 
 @dataclass(frozen=True)
@@ -78,6 +78,28 @@ DEFAULT_GRID: Tuple[Entry, ...] = (
     ),
 )
 
+#: The six capability slots, in the grid's measured order. A provider profile maps each slot to
+#: one of *its* model ids; Jev still answers a positional key, so the criteria text and the
+#: choice keys stay stable while the model behind a slot changes with the provider.
+#:
+#: The order is load-bearing: a profile supplied as a list is read positionally, and the default
+#: profile's slot names are zipped against ``DEFAULT_GRID`` in this order. Reordering either
+#: without re-measuring would relabel every decision.
+SLOTS: Tuple[str, ...] = (
+    "general",
+    "deep-code",
+    "rigorous",
+    "long-text",
+    "tool-throughput",
+    "trivial",
+)
+
+#: The criterion descriptions, taken verbatim from the measured default grid. An operator profile
+#: that names a model but no description inherits these; they are data sent to Jev, not docs.
+SLOT_DESCRIPTIONS: Dict[str, str] = {
+    slot: entry.description for slot, entry in zip(SLOTS, DEFAULT_GRID)
+}
+
 
 def parse_entry(raw: Any) -> Optional[Entry]:
     """Parse ``"model-id: description"`` (or a ``{model_id, description}`` mapping)."""
@@ -88,7 +110,9 @@ def parse_entry(raw: Any) -> Optional[Entry]:
     text = str(raw or "").strip()
     if not text:
         return None
-    model_id, separator, description = text.partition(":")
+    # `": "` rather than the first colon: model ids such as `nemotron-3-nano:30b` carry a colon
+    # that belongs to the id, and splitting on it would silently truncate the model name.
+    model_id, separator, description = text.partition(": ")
     model_id = model_id.strip()
     if not model_id:
         return None

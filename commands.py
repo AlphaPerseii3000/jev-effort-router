@@ -6,14 +6,15 @@ import json
 import sys
 from typing import Any, Callable, List, Optional
 
-from .config import Settings
+from .config import DEFAULT_PROVIDER, Settings
 from .tools import _hint_for, _status
 
 USAGE = (
     "Usage: hermes jev-effort-router <status|route|grid|tail|reset>\n"
-    "  status            routing state, settings, grid and the most recent decisions\n"
-    "  route <task...>   ask Jev what it would pick for a task (no session change)\n"
-    "  grid              list the models Jev may choose between\n"
+    "  status            routing state, settings, profiles and the most recent decisions\n"
+    "  route [--provider <name>] <task...>\n"
+    "                    ask Jev what it would pick for a task (default provider: ollama-cloud)\n"
+    "  grid              list the models Jev may choose between (default profile)\n"
     "  tail [n]          print the last n audit records as JSON (default 10)\n"
     "  reset             drop memoized decisions so the next turn re-routes\n"
 )
@@ -23,10 +24,14 @@ USAGE = (
 SLASH_NAME = "jev-effort-router"
 
 
-def _grid_text(settings: Settings) -> str:
-    lines = [f"Grid ({len(settings.grid)} models):"]
-    for index, entry in enumerate(settings.grid, start=1):
-        default = " (fallback)" if entry.model_id == settings.default_model else ""
+def _grid_text(settings: Settings, provider: str = "") -> str:
+    profile = settings.profile_for(provider) or settings.profile_for(DEFAULT_PROVIDER)
+    entries = profile.entries if profile is not None else settings.grid
+    fallback = profile.fallback_model if profile is not None else settings.default_model
+    name = profile.name if profile is not None else DEFAULT_PROVIDER
+    lines = [f"Grid ({len(entries)} models, {name}):"]
+    for index, entry in enumerate(entries, start=1):
+        default = " (fallback)" if entry.model_id == fallback else ""
         lines.append(f"  {index}. {entry.model_id}{default}")
         lines.append(f"     {entry.description}")
     return "\n".join(lines)
@@ -44,6 +49,8 @@ def _status_text(router, settings: Settings, recent: int = 5) -> str:
         f"  threshold:      {payload['confidence_threshold']}",
         f"  timeout:        {payload['timeout_s']}s",
         f"  per turn:       {payload['route_per_turn']}",
+        f"  provider:       {payload.get('default_provider', DEFAULT_PROVIDER)}",
+        f"  profiles:       {', '.join(p['provider'] for p in payload.get('provider_profiles', []))}",
         f"  fallback:       {payload['fallback']['model']} / {payload['fallback']['effort']}",
         f"  audit records:  {payload['audit']['records']} (enabled: {payload['audit']['enabled']})",
         "",
@@ -122,13 +129,20 @@ def _coverage_text(coverage: dict) -> list:
     return lines
 
 
-def _route_text(router, settings: Settings, task: str) -> str:
+def _route_text(router, settings: Settings, task: str, provider: str = "") -> str:
+    profile = settings.profile_for(provider)
+    if profile is None:
+        return (
+            f"No route (provider_not_routed). Declare {provider!r} under provider_profiles "
+            "before routing against it."
+        )
     decision, reason = router.client(settings).decide(
-        [{"role": "user", "content": task}], settings.effective(None)
+        [{"role": "user", "content": task}], settings.effective(None, profile.name)
     )
     if decision is None:
         return f"No route ({reason}). {_hint_for(reason)}"
     lines = [
+        f"provider: {profile.name}",
         f"model:  {decision.model}",
         f"effort: {decision.effort}  (requested {decision.effort_requested})",
         f"choice: {decision.model_choice}  confidence {decision.model_confidence:.3f}",
@@ -160,9 +174,9 @@ def _handle(router, get_settings, args) -> int:
         if not task:
             print(USAGE, file=sys.stderr)
             return 2
-        text = _route_text(router, settings, task)
+        text = _route_text(router, settings, task, provider=getattr(args, "provider", "") or "")
         print(text)
-        return 0 if text.startswith("model:") else 1
+        return 0 if text.startswith(("provider:", "model:")) else 1
     if sub == "tail":
         limit = max(1, min(int(getattr(args, "count", 10) or 10), 200))
         for record in router.tail(settings, limit=limit):
@@ -183,6 +197,11 @@ def setup_argparse(subparser: Any) -> None:
     sub.add_parser("status", help="Show routing state, grid and recent decisions")
     route = sub.add_parser("route", help="Ask Jev what it would pick for a task")
     route.add_argument("task", nargs="*", help="Task description to route")
+    route.add_argument(
+        "--provider",
+        default="",
+        help="Provider profile to route against (default: ollama-cloud)",
+    )
     sub.add_parser("grid", help="List the models Jev may choose between")
     tail = sub.add_parser("tail", help="Print the last audit records as JSON")
     tail.add_argument("count", nargs="?", type=int, default=10, help="How many records (default 10)")
@@ -221,10 +240,18 @@ def register_commands(ctx: Any, router, get_settings: Callable[[], Settings]) ->
             if action == "grid":
                 return _grid_text(get_settings())
             if action == "route":
-                task = " ".join(tokens[1:]).strip()
+                rest = tokens[1:]
+                provider = ""
+                if "--provider" in rest:
+                    index = rest.index("--provider")
+                    if index + 1 >= len(rest):
+                        return "Usage: /jev-effort-router route --provider <name> <task description>"
+                    provider = rest[index + 1]
+                    del rest[index : index + 2]
+                task = " ".join(rest).strip()
                 if not task:
-                    return "Usage: /jev-effort-router route <task description>"
-                return _route_text(router, get_settings(), task)
+                    return "Usage: /jev-effort-router route [--provider <name>] <task description>"
+                return _route_text(router, get_settings(), task, provider=provider)
             if action == "tail":
                 limit = 10
                 if len(tokens) > 1:
@@ -240,7 +267,7 @@ def register_commands(ctx: Any, router, get_settings: Callable[[], Settings]) ->
                 router.forget()
                 return "Memoized decisions dropped; the next turn re-routes."
             return (
-                "Usage: /jev-effort-router [status|grid|tail [n]|reset|route <task>]"
+                "Usage: /jev-effort-router [status|grid|tail [n]|reset|route [--provider <name>] <task>]"
             )
         except Exception as exc:  # noqa: BLE001
             return f"jev-effort-router: {type(exc).__name__}: {exc}"

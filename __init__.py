@@ -1,9 +1,10 @@
 """jev-effort-router — route each Hermes turn through TypeSafe Jev's decision endpoint.
 
-What it does: on the first provider request of every user turn, ask Jev (`typesafe/jev-1.13`
-over OpenRouter's Decisions API) which Ollama:cloud model and which reasoning-effort level fit
-the task, then rewrite the outgoing request accordingly. Jev generates nothing; the selected
-model still does all the reasoning and all the writing.
+What it does: on the first provider request of every user turn, ask Jev which capability slot and
+which reasoning-effort level fit the task, then rewrite the outgoing request accordingly. The
+shipped profile maps the six slots to six Ollama:Cloud models; an operator can declare a profile
+for another chat_completions provider, and the router stays inside that provider. Jev generates
+nothing; the selected model still does all the reasoning and all the writing.
 
 Where it plugs in: the ``llm_request`` middleware kind
 (``hermes_cli/middleware.py``, invoked from ``agent/turn_api_request.py::build_api_request``),
@@ -42,8 +43,8 @@ def _warn_missing_key_once() -> None:
     if api_key():
         return
     logger.info(
-        "jev-effort-router: OPENROUTER_API_KEY is not set — the router is inert until a key is "
-        "available (Jev is reached through OpenRouter)."
+        "jev-effort-router: no decision-endpoint key is set (REQUESTY_API_KEY / "
+        "OPENROUTER_API_KEY) — the router is inert until a key is available."
     )
 
 

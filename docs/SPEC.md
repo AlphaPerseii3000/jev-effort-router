@@ -63,9 +63,10 @@ reasoning and generation in the main model — it only steers.
 
 - **CAP-7** — Routing degrades to "do nothing" on every surface or configuration it does not own, instead
   of perturbing it.
-  - **success:** for each of — non-`ollama-cloud` provider, a model absent from the option grid, and an
-    auxiliary/compression/MoA call — the plugin leaves the payload untouched (no `model` and no
-    `reasoning_effort` mutation) and appends a skip entry to the audit file naming the trigger.
+  - **success:** for each of — a provider with no declared profile, a model absent from that
+    profile's option grid, and an auxiliary/compression/MoA call — the plugin leaves the payload
+    untouched (no `model` and no `reasoning_effort` mutation) and appends a skip entry to the audit
+    file naming the trigger.
 
 ## Constraints
 
@@ -82,10 +83,11 @@ reasoning and generation in the main model — it only steers.
 - Network failure, HTTP status, or malformed Jev response must never raise into the turn. The middleware
   timeout is host-owned (`plugins.hook_callback_timeout`, default 30 s and fail-open), so the plugin
   enforces its own much shorter budget (default 2.0 s) and returns `None` on any error.
-- The chosen model must exist in the Ollama:cloud catalog of the running profile; a model id outside the
-  configured grid is rejected and treated as low confidence.
+- The chosen model must exist in the active provider's catalog of the running profile; a model id
+  outside the active profile's grid is rejected and treated as low confidence.
 - The option list sent to Jev stays short. A longer Choice list measurably dilutes decision quality, so
-  the grid is the six benchmarked models and grows only on evidence.
+  the shipped profile is the six benchmarked models and grows only on evidence. An operator profile may
+  have fewer slots; it may not smuggle unmeasured models into the shipped profile.
 - One route per user turn: the decision is taken at the first request of the turn and reused for its
   remainder, so the system prompt and prompt cache are not disturbed mid-turn.
 - Effort levels are translated through a per-family mapping table, never sent as a generic parameter:
@@ -97,10 +99,11 @@ reasoning and generation in the main model — it only steers.
 
 ## Non-goals
 
-- **Not provider-agnostic.** Ollama:Cloud is the only provider this plugin serves: the grid is six
-  Ollama:Cloud models, the effort table is written for that profile's vocabulary, and the middleware is
-  gated on `provider: ollama-cloud`. Supporting another provider means a new grid, a new effort table and
-  a review of the routing logic — a different feature, not a config change.
+- **Not cross-provider routing.** `provider_profiles` lets an operator route among the models of
+  another *active* `chat_completions` provider, with that provider's own slot mapping. The plugin never
+  moves a turn to a different provider or base URL: a middleware cannot open a second provider client,
+  and Hermes core already owns provider fallback. Anthropic Messages and Responses/Codex payloads need
+  their own adapter and are out of scope for phase 1.
 - Not an evaluation loop. Scoring the quality of the generated answer after the fact is a separate
   decision type and a separate feature.
 - No model or reasoning routing of *auxiliary* calls (titling, compression, MoA, vision, approvals) —
@@ -135,10 +138,11 @@ the configured model.
 - The Jev request/response shapes behave as documented in `jev-decisions-api.md`; the exact wire
   contract was verified against OpenRouter's model page, tutorial, and Decisions API reference, and
   against Requesty's Decisions docs and OpenAPI schema (state accepts an object; answers are typed).
-- The plugin keys effort translation off the provider profile name `ollama-cloud`; operators using a
-  differently-named profile pointing at `ollama.com` are out of scope for the first release.
-- Ollama:cloud is the only provider the routing grid was benchmarked on, so the plugin is a no-op
-  elsewhere by design rather than by omission.
+- The shipped profile is `ollama-cloud`; an operator can declare a profile for another
+  `chat_completions` provider. Effort translation remains the top-level `reasoning_effort` path in
+  phase 1; Anthropic Messages and Responses payloads are out of scope.
+- The default grid was benchmarked on Ollama:cloud, so its criteria and effort rows are the measured
+  ones. No other provider's profile ships without its own benchmark evidence.
 
 ## Open Questions
 

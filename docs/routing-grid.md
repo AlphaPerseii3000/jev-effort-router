@@ -6,13 +6,17 @@ how a chosen level lands on each model family's wire.
 ## Models offered to Jev
 
 The Choice options are exactly these six, in this order. The option string is
-`"<model-id>: <one-line profile>"`; the model id is everything before the first `:`.
+`"<model-id>: <one-line profile>"`; the separator is `": "` (colon + space), not the first colon —
+`nemotron-3-nano:30b` is one model id, colon included.
 
-Every model id here belongs to the **Ollama:Cloud** provider — this plugin routes nothing else. The
-profile text is sent to Jev verbatim, **in English**, and is part of the measured payload, so treat it
-as data rather than documentation: it is not a display string, and rewriting or re-translating it
-changes what Jev is choosing between. The criteria were moved from French to English in this pass; the
-before/after measurement is recorded in the changelog.
+Every model id in the **built-in profile** belongs to **Ollama:Cloud**. An operator-supplied
+`provider_profiles` entry can map the same six slots to another `chat_completions` provider, with
+that provider's own ids; see [`provider-profiles.md`](provider-profiles.md). This file remains the
+benchmark evidence for the shipped profile, not for an operator's map. The profile text is sent to
+Jev verbatim, **in English**, and is part of the measured payload, so treat it as data rather than
+documentation: it is not a display string, and rewriting or re-translating it changes what Jev is
+choosing between. The criteria were moved from French to English in this pass; the before/after
+measurement is recorded in the changelog.
 
 | # | Model id (option prefix) | Profile line sent to Jev | Context | Benchmark evidence |
 |---|---|---|---|---|

@@ -31,11 +31,11 @@ from .client import (
     JevClient,
 )
 from .config import (
+    DEFAULT_PROVIDER,
     ROUTED_API_MODES,
-    ROUTED_PROVIDER,
-    ROUTED_PROVIDER_ALIASES,
     EffectiveSettings,
     Settings,
+    normalize_provider,
 )
 from .memo import Memo, TurnMemo
 from .state import last_user_message
@@ -129,8 +129,9 @@ class Router:
             return None
 
         # -- skip gates: anything the router does not own goes out untouched ---------
-        provider_key = (provider or "").strip().lower()
-        if provider_key not in ("", ROUTED_PROVIDER) and provider_key not in ROUTED_PROVIDER_ALIASES:
+        provider_key = normalize_provider(provider) or DEFAULT_PROVIDER
+        profile = settings.profile_for(provider_key)
+        if profile is None:
             self._record_skip(settings, REASON_SKIPPED_PROVIDER, where)
             return None
         if api_mode and api_mode not in ROUTED_API_MODES:
@@ -139,12 +140,12 @@ class Router:
 
         # -- per-surface policy: resolved once per request ---------------------------
         # Absent, null or an unlisted platform leaves ``policy`` None and ``effective`` equal
-        # to the global settings, so the gates below behave exactly as before the key existed.
+        # to the provider profile, so the gates below behave exactly as before the key existed.
         policy = settings.policy_for(platform)
         if policy is not None and policy.enabled is False:
             self._record_skip(settings, REASON_SURFACE_DISABLED, where)
             return None
-        effective = settings.effective(policy)
+        effective = settings.effective(policy, provider_key)
 
         # A surface's grid is a structural cap: a configured model outside it degrades to a
         # skip that keeps that configured model on the wire, rather than being re-pinned.
@@ -169,7 +170,7 @@ class Router:
                 # A decision naming a model the provider does not have is worse than no decision:
                 # asking for it turns a degraded turn into a dead one (HTTP 404, no response).
                 # Leave the request exactly as the operator configured it.
-                if not self._provider_has(decision.model):
+                if not self._provider_has(decision.model, provider_key):
                     logger.warning(
                         "jev-effort-router: Jev chose %r, which is not in the provider's catalog; "
                         "leaving the turn on the configured model",
@@ -212,7 +213,7 @@ class Router:
 
     # -- decision plumbing -------------------------------------------------------
 
-    def _provider_has(self, model_id: str) -> bool:
+    def _provider_has(self, model_id: str, provider: str = "") -> bool:
         """Whether the chosen model is safe to put on the wire, according to the provider catalog.
 
         Answers ``True`` whenever the catalog has nothing to say — an absent cache, an unreadable
@@ -221,7 +222,7 @@ class Router:
         not contain this one is a No.
         """
         try:
-            known = self._catalog.is_known(model_id)
+            known = self._catalog.is_known(model_id, provider=provider)
         except Exception as exc:  # noqa: BLE001 - a catalog probe never blocks a turn
             logger.debug("jev-effort-router: catalog check failed (%s: %s)", type(exc).__name__, exc)
             return True
@@ -387,16 +388,20 @@ class Router:
     def count(self, settings: Settings) -> int:
         return self.audit(settings).count()
 
-    def grid_report(self, settings: Settings) -> List[Dict[str, Any]]:
-        """The grid annotated with what the provider catalog says about each entry.
+    def grid_report(self, settings: Settings, provider: str = "") -> List[Dict[str, Any]]:
+        """The profile's grid annotated with what the provider catalog says about each entry.
 
         Empty when there is no catalog evidence, so a caller can tell "nothing to report" from
-        "every entry is fine".
+        "every entry is fine". An unknown provider reports the default profile, matching the
+        status surface's default view.
         """
+        profile = settings.profile_for(provider) or settings.profile_for(DEFAULT_PROVIDER)
+        entries = profile.entries if profile is not None else settings.grid
+        provider_key = profile.name if profile is not None else (provider or DEFAULT_PROVIDER)
         report: List[Dict[str, Any]] = []
-        for entry in settings.grid:
+        for entry in entries:
             try:
-                known = self._catalog.is_known(entry.model_id)
+                known = self._catalog.is_known(entry.model_id, provider=provider_key)
             except Exception:  # noqa: BLE001 - a status view never raises
                 known = None
             if known is None:
