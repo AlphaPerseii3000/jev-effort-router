@@ -1,21 +1,27 @@
 """An answer the question never offered never reaches the wire.
 
-``max`` is a vocabulary level (``EFFORT_LEVELS``) but an *option* only on a route whose
-``effort_maps`` entry declares it. The question follows the option set, while ``resolve_effort``
-still consults the built-in policy of an unmapped route — and ``opencode-go``, ``commandcode``
-and ``codex`` declare ``max`` there. Validating the answer against the vocabulary alone therefore
-let a well-formed but unoffered ``max`` reach the wire: the question offered three levels and the
-turn ran the priciest rung.
+``max`` is an option only where the running route declares it — in its operator ``effort_maps``
+entry or, since 0.7.0, in its own built-in policy. The question follows the option set, while
+``resolve_effort`` still consults the route's policy: validating the answer against the vocabulary
+alone once let a well-formed but unoffered ``max`` reach the wire — the question offered three
+levels and the turn ran the priciest rung.
 
-The rule these tests pin is the one the branch already applies to a declared map: an unoffered
-level is *recorded* (``effort_requested``) and dropped from the wire (``effort: null``), never
-clamped to a neighbour and never a reason to lose the model decision. Pinned on all three
-deciders, on the memo replay, and on the ``default_effort`` knob.
+The rule these tests pin is the one the branch applies to every declaration: an unoffered level is
+*recorded* (``effort_requested``) and dropped from the wire (``effort: null``), never clamped to a
+neighbour and never a reason to lose the model decision. Pinned on all three deciders, on the memo
+replay, and on the ``default_effort`` knob.
+
+The route used to demonstrate it is ``opencode-go`` with an operator map that drops ``max``: its
+*built-in* policy now offers ``max`` too, so the map is the only way to narrow the question.
 """
 
 from __future__ import annotations
 
 import json
+
+NARROWED_GO_MAP = {
+    "opencode-go": {"deepseek-v4.1-flash": {"accepted": ["low", "medium", "high"]}}
+}
 
 
 def test_an_unoffered_max_is_dropped_from_the_live_console_wire(tmp_path, monkeypatch):
@@ -23,7 +29,7 @@ def test_an_unoffered_max_is_dropped_from_the_live_console_wire(tmp_path, monkey
     from test_effort_rubric import GO_CONFIG, _go_router, _max_answer
     from test_router import route
 
-    config = {key: value for key, value in GO_CONFIG.items() if key != "effort_maps"}
+    config = dict(GO_CONFIG, effort_maps=NARROWED_GO_MAP)
     transport = StubTransport([StubResponse(_max_answer())])
     router, settings = _go_router(tmp_path, monkeypatch, transport, config)
 
@@ -143,8 +149,8 @@ def test_a_replayed_level_the_route_no_longer_offers_is_omitted(tmp_path, monkey
     assert first["request"]["reasoning_effort"] == "max"
 
     # The operator narrows the route between the turn's two requests: the memo still carries
-    # ``max``, and the replay re-resolves it against the route that will actually run.
-    narrowed = {key: value for key, value in GO_CONFIG.items() if key != "effort_maps"}
+    # ``max``, and the replay re-resolves it against the declaration that will actually run.
+    narrowed = dict(GO_CONFIG, effort_maps=NARROWED_GO_MAP)
     settings2 = settings_for(narrowed)
     monkeypatch.setattr(router, "_get_settings", lambda: settings2)
     second = route(router, provider="opencode-go", turn_id="turn-map-dropped", api_call_count=1)

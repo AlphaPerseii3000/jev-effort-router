@@ -146,12 +146,27 @@ def test_the_shared_question_never_offers_a_level_a_family_caps_away():
     assert offered_levels_for_grid(haiku_only, "anthropic") == ("low", "medium", "high", "max")
 
 
-def test_a_route_without_an_offered_declaration_keeps_the_three_level_default():
-    """The built-in offering branch is opt-in per policy: no other route's question widens."""
-    assert offered_levels("openai-codex", "gpt-6-luna") == DEFAULT_OFFERED_LEVELS
-    assert offered_levels("opencode-go", "deepseek-v4.1-flash") == DEFAULT_OFFERED_LEVELS
-    assert offered_levels("commandcode", "deepseek/deepseek-v4.1-flash") == DEFAULT_OFFERED_LEVELS
+def test_the_question_follows_each_routes_own_offered_declaration():
+    """A policy that declares an offered set widens its question; nothing else does.
+
+    The three OpenAI-compatible generation routes carry their contract in code (each model's
+    accepted set covers ``low``/``medium``/``high``/``max``), so an operator no longer repeats it
+    in ``effort_maps``. A policy that leaves the field empty keeps the three-level default.
+    """
+    assert offered_levels("openai-codex", "gpt-6-luna") == ("low", "medium", "high", "max")
+    assert offered_levels("openai-codex", "gpt-6-luna-900k") == ("low", "medium", "high", "max")
+    assert offered_levels("openai-codex", "gpt-6.1-sol") == ("low", "medium", "high", "max")
+    assert offered_levels("opencode-go", "deepseek-v4.1-flash") == ("low", "medium", "high", "max")
+    assert offered_levels("commandcode", "deepseek/deepseek-v4.1-flash") == (
+        "low",
+        "medium",
+        "high",
+        "max",
+    )
+    # No declaration, no widening: the legacy route keeps the three-level question.
     assert offered_levels("ollama-cloud", "kimi-k3") == DEFAULT_OFFERED_LEVELS
+    # A model outside the route's catalog is a deliberate omission, not an offer.
+    assert offered_levels("opencode-go", "kimi-k3") == DEFAULT_OFFERED_LEVELS
 
 
 def test_an_operator_map_still_wins_over_the_built_in_offer():

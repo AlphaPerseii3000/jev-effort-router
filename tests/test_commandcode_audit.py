@@ -319,19 +319,34 @@ def test_status_omits_the_block_when_the_trio_is_empty(tmp_path):
     assert "commandcode_fallback" not in payload
 
 
-def test_status_shows_a_partial_trio_as_configured_but_disabled(tmp_path):
+def test_status_shows_the_completed_defaults_for_a_url_only_trio(tmp_path):
     transport = StubTransport([])
     router, holder = build(tmp_path, transport, cc_config(console_jev_commandcode_api_key_env=""))
 
     block = json.loads(_status(router, holder["settings"]))["commandcode_fallback"]
 
+    # The URL opted in, so the pair completes with the documented defaults and the fallback runs.
     assert block["configured"] is True
-    assert block["enabled"] is False
+    assert block["enabled"] is True
     assert block["endpoint"] == CC_URL
     assert block["model"] == CC_MODEL
-    assert block["api_key_env"] is None
+    assert block["api_key_env"] == "COMMANDCODE_API_KEY"
+    assert block["reason"] is None
+
+
+def test_status_shows_a_malformed_endpoint_as_configured_but_disabled(tmp_path):
+    transport = StubTransport([])
+    router, holder = build(
+        tmp_path, transport, cc_config(console_jev_commandcode_base_url="http://api.commandcode.ai/provider/v1/systemone")
+    )
+
+    block = json.loads(_status(router, holder["settings"]))["commandcode_fallback"]
+
+    assert block["configured"] is True
+    assert block["enabled"] is False
+    assert block["endpoint"] is None
     # Sanitized: the reason names the setting, never a value.
-    assert "console_jev_commandcode_api_key_env" in block["reason"]
+    assert "console_jev_commandcode_base_url" in block["reason"]
 
 
 def test_status_reports_a_complete_trio_as_disabled_for_a_decider_that_cannot_use_it(tmp_path):

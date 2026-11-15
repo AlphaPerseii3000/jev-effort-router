@@ -442,34 +442,27 @@ def test_max_is_offered_and_applied_where_the_map_accepts_it(tmp_path, monkeypat
     assert (record["effort_requested"], record["effort"]) == ("max", "max")
 
 
-def test_max_is_not_offered_without_a_map(tmp_path, monkeypatch):
-    from stubs import StubResponse, StubTransport, decision_payload
+def test_dropping_the_effort_map_keeps_the_max_option_and_the_wire_value(tmp_path, monkeypatch):
+    """The built-in policy now declares what the operator's ``effort_maps`` used to.
+
+    This is the config simplification's core promise: deleting the ``effort_maps`` entry from a
+    profile must not change the effort question, the decision it accepts, or the wire value.
+    """
+    from stubs import StubResponse, StubTransport
     from test_router import route
 
     config = {key: value for key, value in GO_CONFIG.items() if key != "effort_maps"}
-    transport = StubTransport(
-        [
-            StubResponse(
-                decision_payload(
-                    model_choice="1",
-                    model_confidence=1.0,
-                    effort_choice="medium",
-                    effort_confidence=1.0,
-                    effort_probabilities={"medium": 1.0},
-                    grid_size=1,
-                )
-            )
-        ]
-    )
+    transport = StubTransport([StubResponse(_max_answer())])
     router, settings = _go_router(tmp_path, monkeypatch, transport, config)
 
     result = route(router, provider="opencode-go", turn_id="turn-no-map")
 
     criteria = transport.last_payload["questions"][EFFORT_QUESTION_ID]["criteria"]
-    assert set(criteria) == {"low", "medium", "high"}
-    # Nothing in the question names ``max``, and the answer that was offered lands verbatim.
-    assert "max" not in json.dumps(transport.last_payload["questions"], ensure_ascii=False)
-    assert result["request"]["reasoning_effort"] == "medium"
+    assert set(criteria) == {"low", "medium", "high", "max"}
+    assert result is not None
+    assert result["request"]["reasoning_effort"] == "max"
+    record = router.tail(settings, limit=1)[0]
+    assert (record["effort_requested"], record["effort"]) == ("max", "max")
 
 
 def test_a_capped_max_is_audited_with_the_level_that_was_asked(tmp_path, monkeypatch):

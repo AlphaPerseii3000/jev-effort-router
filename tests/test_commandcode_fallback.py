@@ -8,7 +8,9 @@ that make it safe to enable:
 * it is one request, with the same per-call timeout, never a retry loop;
 * its credential, its headers and its payload are its own: nothing from the generation provider is
   inherited and no secret reaches a log line;
-* a partial or malformed configuration disables it and leaves the legacy chain exactly as it was.
+* the URL is the whole opt-in: an empty one disables it silently, while the model and the key
+  variable complete themselves with the documented pair once the endpoint is named. A malformed
+  endpoint disables it and leaves the legacy chain exactly as it was.
 """
 
 from __future__ import annotations
@@ -550,19 +552,34 @@ def test_when_both_hosts_fail_the_fallback_reason_wins(second_failure, expected_
 # -- configuration ------------------------------------------------------------------
 
 
-def test_a_partial_trio_disables_only_the_fallback(caplog):
-    config = cc_config(console_jev_commandcode_api_key_env="")
-    transport = StubTransport([StubResponse({"error": "rate limited"}, status_code=429)])
+def test_the_endpoint_alone_is_a_complete_trio_with_the_documented_defaults(caplog):
+    # ``COMMANDCODE_API_KEY`` / ``typesafe/jev`` are the documented pair for the URL opt-in, so an
+    # operator who names only the endpoint still gets a working fallback — no warning, and the
+    # defaulted model is the one that actually goes on the wire.
+    config = cc_config(
+        console_jev_commandcode_api_key_env="", console_jev_commandcode_model=""
+    )
+    transport = StubTransport(
+        [StubResponse({"error": "rate limited"}, status_code=429), StubResponse(console_answer())]
+    )
 
     with caplog.at_level(logging.WARNING, logger="config"):
         client, settings = make(transport, config)
         decision, reason = ask(client, settings)
 
-    assert decision is None
-    assert reason == REASON_UPSTREAM_ERROR
-    assert transport.call_count == 1
-    assert "console_jev_commandcode_api_key_env" in caplog.text
-    assert CC_KEY not in caplog.text
+    assert reason is None
+    assert decision is not None
+    assert decision.decider_endpoint == CC_URL
+    assert decision.decider_model == CC_MODEL
+    assert (settings.commandcode_fallback().key_env, settings.commandcode_fallback().model) == (
+        "COMMANDCODE_API_KEY",
+        CC_MODEL,
+    )
+    assert [call["url"] for call in transport.calls] == [CONSOLE_URL, CC_URL]
+    assert [call["json"]["model"] for call in transport.calls] == [CONSOLE_PRIMARY, CC_MODEL]
+    assert transport.calls[1]["headers"]["Authorization"] == f"Bearer {CC_KEY}"
+    # No "fallback is disabled" warning: the URL alone is a complete opt-in.
+    assert not [record for record in caplog.records if "fallback is disabled" in record.getMessage()]
 
 
 @pytest.mark.parametrize(

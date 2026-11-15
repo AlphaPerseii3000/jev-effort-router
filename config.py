@@ -1,9 +1,12 @@
 """Resolved plugin settings.
 
 Every tunable comes from one place so a callback, a tool handler, a slash command and the
-CLI all read the same values. ``ctx.get_config`` already resolves
-``plugins.entries.jev-effort-router.settings.<key>`` over the manifest default, so this module
-only adds coercion, validation and the "value is missing or nonsense" backstops.
+CLI all read the same values. ``ctx.get_config`` returns ``plugins.entries.<plugin>.settings.<key>``
+**or the default the caller passes in** — it does *not* merge ``plugin.yaml``'s ``config_schema``
+defaults (``core/hermes_cli/plugins.py``), so the manifest only documents and feeds the UI. The
+effective default of every setting is the constant this module falls back to in
+:func:`load_settings`, and :func:`load_settings` only adds coercion, validation and the "value is
+missing or nonsense" backstops.
 """
 
 from __future__ import annotations
@@ -266,12 +269,19 @@ DEFAULT_CONSOLE_JEV_FALLBACK_MODEL = "jev-1.13"
 DEFAULT_CONSOLE_KEY_ENV = "OPENCODE_CONSOLE_API_KEY"
 
 #: The opt-in secondary transport for the ``jev_console`` decider: a SystemOne endpoint, a model
-#: and the name of the variable holding its key. Deliberately **no** defaults — an empty trio is
-#: how the operator says "no fallback", and every default would silently send context to a
-#: non-ZDR upstream on a deployment that never asked for it.
+#: and the name of the variable holding its key. The **URL** is the whole opt-in — the upstream has
+#: no ZDR agreement, so no default may enable it: with an empty ``console_jev_commandcode_base_url``
+#: the fallback is disabled and nothing else happens. The other two settings only say *what* to ask
+#: that endpoint and default to the pair every deployment writes anyway, so a profile that opts in
+#: only has to name the endpoint.
 COMMANDCODE_BASE_URL_SETTING = "console_jev_commandcode_base_url"
 COMMANDCODE_MODEL_SETTING = "console_jev_commandcode_model"
 COMMANDCODE_KEY_ENV_SETTING = "console_jev_commandcode_api_key_env"
+
+#: Applied only once :data:`COMMANDCODE_BASE_URL_SETTING` is non-empty (see
+#: :func:`resolve_commandcode_fallback`). They are never enough to enable the fallback on their own.
+DEFAULT_COMMANDCODE_MODEL = "typesafe/jev"
+DEFAULT_COMMANDCODE_KEY_ENV = "COMMANDCODE_API_KEY"
 
 DEFAULT_JEV_MODEL = "typesafe/jev-1.13"
 DEFAULT_ENDPOINT = "https://openrouter.ai/api/alpha/decisions"
@@ -583,39 +593,31 @@ def _validated_fallback_url(raw: str) -> Tuple[str, str]:
 
 
 def resolve_commandcode_fallback(*, base_url: Any, model: Any, api_key_env: Any) -> CommandCodeFallback:
-    """Resolve the secondary-transport trio. Never raises; an invalid trio is simply disabled."""
+    """Resolve the secondary-transport trio. Never raises; an invalid trio is simply disabled.
+
+    ``base_url`` gates everything: it is the operator's explicit consent to send context to an
+    upstream without a ZDR agreement, so an empty one returns the disabled fallback with no reason
+    — a leftover ``model`` or ``api_key_env`` is then inert, not an operator mistake worth a
+    warning. Once the URL is declared, the two fields that only say *what* to ask it complete
+    themselves with the documented pair (:data:`DEFAULT_COMMANDCODE_MODEL`,
+    :data:`DEFAULT_COMMANDCODE_KEY_ENV`), because there is nothing deployment-specific to choose.
+    """
     url = str(base_url or "").strip()
-    chosen_model = str(model or "").strip()
-    key_env = str(api_key_env or "").strip()
-    if not (url or chosen_model or key_env):
+    if not url:
         return CommandCodeFallback()
+
+    chosen_model = str(model or "").strip() or DEFAULT_COMMANDCODE_MODEL
+    key_env = str(api_key_env or "").strip() or DEFAULT_COMMANDCODE_KEY_ENV
 
     # The endpoint is validated (and an invalid one dropped) before anything else: a URL that
     # embedded a credential must never survive into a status line or a log record, not even on the
-    # path that is about to be rejected for being incomplete.
-    clean_url, problem = _validated_fallback_url(url) if url else ("", "")
+    # path that is about to be rejected.
+    clean_url, problem = _validated_fallback_url(url)
     if problem:
         return CommandCodeFallback(
             model=chosen_model,
             key_env=key_env,
             reason=f"{COMMANDCODE_BASE_URL_SETTING} {problem}",
-        )
-
-    missing = [
-        setting
-        for setting, value in (
-            (COMMANDCODE_BASE_URL_SETTING, url),
-            (COMMANDCODE_MODEL_SETTING, chosen_model),
-            (COMMANDCODE_KEY_ENV_SETTING, key_env),
-        )
-        if not value
-    ]
-    if missing:
-        return CommandCodeFallback(
-            url=clean_url,
-            model=chosen_model,
-            key_env=key_env,
-            reason="incomplete (missing " + ", ".join(missing) + ")",
         )
     return CommandCodeFallback(url=clean_url, model=chosen_model, key_env=key_env)
 
@@ -1292,8 +1294,9 @@ def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
     )
     # Sanitized on purpose: the message names the setting at fault and never its value, and it is
     # emitted once per settings load — even when the active decider is not jev_console, because a
-    # half-written trio is an operator error worth surfacing. A broken trio disables only the
-    # fallback, so the legacy chain keeps working exactly as it does without the three keys.
+    # malformed endpoint is an operator error worth surfacing. A broken trio disables only the
+    # fallback, so the legacy chain keeps working exactly as it does without the three keys. An
+    # empty ``console_jev_commandcode_base_url`` is *not* an error: it is the opt-in's default.
     fallback = settings.commandcode_fallback()
     if fallback.configured and not fallback.enabled:
         logger.warning(

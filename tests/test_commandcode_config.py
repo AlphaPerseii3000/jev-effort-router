@@ -1,10 +1,15 @@
 """Resolution of the opt-in CommandCode trio — and what "configured" is allowed to mean.
 
-Three settings, no defaults. The distinctions matter more than the happy path:
+Three settings, one gate. The distinctions matter more than the happy path:
 
-* empty means *off* and must look exactly like a deployment that never knew the setting;
-* a half-written trio, or a URL that is not a plain HTTPS endpoint, disables the fallback and
-  nothing else — the legacy chain is never blocked by a configuration mistake made in the fallback;
+* ``console_jev_commandcode_base_url`` is the whole opt-in — the upstream has no ZDR agreement —
+  so an empty URL means *off* and must look exactly like a deployment that never knew the setting,
+  even when the other two keys are lying around;
+* once the URL names an endpoint, the model and the key variable complete themselves with the
+  documented pair (``typesafe/jev``, ``COMMANDCODE_API_KEY``): nothing about them is
+  deployment-specific;
+* a URL that is not a plain HTTPS endpoint disables the fallback and nothing else — the legacy
+  chain is never blocked by a configuration mistake made in the fallback;
 * an unusable URL is dropped from the resolved value, so a URL that carried credentials can never
   be echoed by a status line or a log record.
 """
@@ -17,8 +22,6 @@ import pytest
 
 from config import (
     COMMANDCODE_BASE_URL_SETTING,
-    COMMANDCODE_KEY_ENV_SETTING,
-    COMMANDCODE_MODEL_SETTING,
     CommandCodeFallback,
     Settings,
     load_settings,
@@ -60,20 +63,33 @@ def test_surrounding_whitespace_is_trimmed():
     assert (fallback.url, fallback.model, fallback.key_env) == (CC_URL, CC_MODEL, CC_KEY_ENV)
 
 
+def test_an_empty_url_is_off_even_when_the_other_two_are_set():
+    # The URL is the consent to reach a non-ZDR upstream: without it the pair says "what to ask"
+    # about an endpoint nobody opted into, which is inert, not an error worth a warning.
+    fallback = resolve(base_url="", model=CC_MODEL, api_key_env=CC_KEY_ENV)
+
+    assert fallback == CommandCodeFallback()
+    assert fallback.configured is False
+    assert fallback.enabled is False
+    assert fallback.reason == ""
+
+
 @pytest.mark.parametrize(
-    "missing_setting, kwargs",
+    "kwargs, attribute, expected",
     [
-        (COMMANDCODE_BASE_URL_SETTING, {"base_url": ""}),
-        (COMMANDCODE_MODEL_SETTING, {"model": ""}),
-        (COMMANDCODE_KEY_ENV_SETTING, {"api_key_env": ""}),
+        ({"model": ""}, "model", CC_MODEL),
+        ({"api_key_env": ""}, "key_env", CC_KEY_ENV),
     ],
+    ids=["model-empty", "key-env-empty"],
 )
-def test_any_missing_field_disables_the_fallback_and_names_it(missing_setting, kwargs):
+def test_the_url_alone_completes_the_trio_with_the_documented_defaults(kwargs, attribute, expected):
     fallback = resolve(**kwargs)
 
     assert fallback.configured is True
-    assert fallback.enabled is False
-    assert missing_setting in fallback.reason
+    assert fallback.enabled is True
+    assert fallback.reason == ""
+    assert getattr(fallback, attribute) == expected
+    assert fallback.url == CC_URL
 
 
 @pytest.mark.parametrize(
@@ -103,9 +119,9 @@ def test_an_unusable_url_disables_the_fallback_without_keeping_the_value(url):
     assert "secret" not in fallback.reason
 
 
-def test_an_invalid_url_is_dropped_even_when_the_trio_is_also_incomplete():
-    # The rejection path must not keep the value: an incomplete trio whose URL embedded a
-    # credential would otherwise hand it straight to the status line.
+def test_an_invalid_url_is_dropped_even_when_the_other_two_are_empty():
+    # The rejection path must not keep the value: a URL that embedded a credential would
+    # otherwise hand it straight to the status line.
     fallback = resolve_commandcode_fallback(
         base_url="https://user:secret@api.commandcode.ai/provider/v1/systemone",
         model="",
@@ -170,13 +186,16 @@ def test_only_the_console_decider_can_use_the_trio():
         assert settings.active_commandcode_fallback() == CommandCodeFallback()
 
 
-def test_a_partial_trio_warns_once_without_naming_a_value(caplog):
+def test_opting_in_with_the_url_alone_warns_about_nothing(caplog):
+    # The defaults are the documented pair, so a profile that names only the endpoint is complete:
+    # no warning, and the resolved value names the key variable it will read.
     with caplog.at_level(logging.WARNING, logger="config"):
-        settings_for({"console_jev_commandcode_base_url": CC_URL})
+        settings = settings_for({"console_jev_commandcode_base_url": CC_URL})
 
-    assert "console_jev_commandcode" in caplog.text
-    assert COMMANDCODE_MODEL_SETTING in caplog.text
-    assert caplog.text.count("disabled") == 1
+    assert caplog.records == []
+    fallback = settings.commandcode_fallback()
+    assert fallback.enabled is True
+    assert (fallback.model, fallback.key_env) == (CC_MODEL, CC_KEY_ENV)
 
 
 # -- a URL that the parser itself rejects ---------------------------------------------
@@ -210,7 +229,7 @@ def test_the_loader_survives_a_url_that_urlsplit_cannot_parse(caplog):
     assert settings.active_commandcode_fallback() == CommandCodeFallback()
 
 
-def test_a_partial_trio_with_an_unparsable_url_also_loads():
+def test_a_trio_with_an_unparsable_url_and_no_model_also_loads():
     settings = settings_for(
         {
             "console_jev_commandcode_base_url": BROKEN_URL,

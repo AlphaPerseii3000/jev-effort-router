@@ -4,9 +4,48 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.0] - 2026-11-15
+
+### Changed
+
+- **A profile's `plugins.entries.jev-effort-router` block drops from 50 to 9 lines with no change in
+  routing** (`docs/SPEC-simplificacao-config.md`). Nothing about `grids` or `effort_maps` was
+  operator-specific: the route catalogs in `grid.py` and the effort contracts in `effort.py` already
+  held the same declarations. The four pieces that had to move into the code first:
+  - `effort.OPENCODE_GO_REASONING_POLICIES`, `COMMANDCODE_REASONING_POLICIES` and
+    `CODEX_REASONING_POLICIES` now declare `offered=("low","medium","high","max")`. Until now
+    `max` was offered only because the *operator* declared it in `effort_maps`
+    (`offered_levels` deliberately ignored a built-in policy's `accepted_levels`), so deleting the
+    map without this change would have quietly removed `max` from three routes' effort question.
+    `ANTHROPIC_MODEL_LEVELS` is untouched: Opus/Sonnet still stop at `high`, Haiku keeps `max`, and
+    a level above a cap is omitted, never clamped.
+  - `console_jev_commandcode_base_url` is now the whole opt-in for the SystemOne fallback. With the
+    URL declared, an empty `console_jev_commandcode_model` resolves to `typesafe/jev` and an empty
+    `console_jev_commandcode_api_key_env` to `COMMANDCODE_API_KEY`
+    (`config.resolve_commandcode_fallback`). With the URL empty the fallback is disabled **without a
+    warning**: the non-ZDR upstream is never reached by a default, and a leftover model/key is inert
+    rather than an error. Both keys had the same value in every profile anyway.
+  - `plugin.yaml` documents `endpoint`, which `load_settings` has always read (the legacy `jev`
+    decider POSTs to it) and the schema was missing, and its descriptions now say what the code
+    does: `console_jev_fallback_model: ''` **disables** the paid `jev-1.13` leg, `grids` and
+    `effort_maps` are overrides of the built-in declaration, and the CommandCode model/key default
+    only once the URL is named.
+  - Corrected the `config.py` docstring: `ctx.get_config` returns the caller's default, it does
+    **not** merge `plugin.yaml`'s `config_schema` defaults, so the manifest documents the settings
+    and the effective defaults live in `load_settings`.
 
 ### Added
+
+- **`tests/test_config_simplification_equivalence.py`**: the block from before the simplification
+  (`tests/fixtures/jev_settings_legacy.json`, transcribed from a real profile) and the 9-line block
+  (`tests/fixtures/jev_settings_target_minimal.json`) are compared setting by setting for
+  `opencode-go`, `commandcode`, `openai-codex` and `anthropic`: grid ids, descriptions, the wire id
+  each model reaches, the degraded model, the offered levels, and `resolve_effort` for every model ×
+  level of the ladder. The only permitted difference is the `description` of the two DeepSeek
+  entries, which is a criterion Jev reads and never reaches the wire. Fixed assertions pin the
+  anthropic caps (`opus`/`sonnet` up to `high`, `haiku` up to `max`; `xhigh`/`max` on Opus resolve to
+  `None`). Dropping an `offered` declaration makes the suite fail, which is the point: the code is
+  now the single source.
 
 - **The native `anthropic` route is routable, and the subscription route's `[1m]` context variant is
   normalised.** The owner's decision (card t_ec2453b1): the Jev routes *both* Claude routes, because
