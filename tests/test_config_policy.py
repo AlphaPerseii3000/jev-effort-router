@@ -29,6 +29,8 @@ def settings_for(config):
 # -- the removed knobs ---------------------------------------------------------------
 
 
+#: The four settings 0.8.0 removed. They must be *named* here — that is the whole point of the
+#: test below — even though no other ``.py``, ``plugin.yaml`` or README line mentions them.
 REMOVED_KNOBS = {
     "confidence_threshold_per_decider": {"jev": 0.9, "openai_compatible": 0.8},
     "effort_criteria": {"high": "our own high-effort text"},
