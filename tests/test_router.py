@@ -1257,7 +1257,9 @@ def test_jev_console_decider_generation_route_go_uses_the_single_model_catalog(t
     # records the model as fixed by the grid rather than as a choice key.
     questions = transport.calls[0]["json"]["questions"]
     assert "model_route" not in questions
-    assert set(questions["reasoning_effort"]["criteria"]) == {"low", "medium", "high"}
+    # The route's own policy declares the effort range, so `max` is offered without the operator
+    # having to repeat it in `effort_maps` (the simplification this release ships).
+    assert set(questions["reasoning_effort"]["criteria"]) == {"low", "medium", "high", "max"}
     # The probe-confirmed top-level reasoning_effort carries the decided level on the Go wire.
     assert result["request"]["reasoning_effort"] == "high"
     record = router.tail(settings, limit=1)[0]

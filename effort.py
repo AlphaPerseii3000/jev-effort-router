@@ -29,8 +29,9 @@ from typing import Any, Dict, Mapping, Optional, Sequence, Tuple
 #: Hermes' ladder, low to high. Used only for nearest-weaker arithmetic.
 LADDER: Tuple[str, ...] = ("none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra")
 
-#: Levels offered when the route declares no effort map. ``max`` is deliberately absent: it is
-#: only offered where a map proves the wire accepts it (see :func:`offered_levels`).
+#: Levels offered when the route declares neither an ``effort_maps`` entry nor an ``offered`` set on
+#: its built-in policy. ``max`` is deliberately absent: it is only offered where the route's own
+#: contract proves the wire takes it (see :func:`offered_levels`).
 DEFAULT_OFFERED_LEVELS: Tuple[str, ...] = ("low", "medium", "high")
 
 
@@ -383,10 +384,11 @@ class ModelReasoningPolicy:
     legacy_clamp: bool = False
     #: Levels this route offers by default, taken from its own built-in declaration.
     #:
-    #: Empty means "not declared", and :func:`offered_levels` keeps the three-level default — the
-    #: rule every route has followed so far: ``max`` is offered only under an explicit
-    #: declaration, never offered and then clamped away. Only a route whose contract the planner
-    #: re-decided sets this field, so adding it cannot widen an existing route's question.
+    #: Empty means "not declared", and :func:`offered_levels` keeps the three-level default. A
+    #: route whose contract the planner re-decided declares its own set here, so ``max`` is
+    #: offered exactly where the route proves it takes it — never offered and then clamped away.
+    #: The operator's ``effort_maps`` still wins: an entry for the route replaces the whole policy,
+    #: offered set included.
     offered: Tuple[str, ...] = ()
 
 
@@ -448,6 +450,7 @@ OPENCODE_GO_REASONING_POLICIES: Dict[str, ModelReasoningPolicy] = {
             "invalid level too), not that the level is graded or calibrated to a measured reasoning depth."
         ),
         overrides={"xhigh": "max"},
+        offered=("low", "medium", "high", "max"),
     ),
 }
 
@@ -509,6 +512,7 @@ COMMANDCODE_REASONING_POLICIES: Dict[str, ModelReasoningPolicy] = {
             "it honours a depth."
         ),
         overrides={"xhigh": "max"},
+        offered=("low", "medium", "high", "max"),
     )
     for model_id in ("deepseek/deepseek-v4.1-flash",)
 }
@@ -575,6 +579,10 @@ CODEX_REASONING_POLICIES: Dict[str, ModelReasoningPolicy] = {
             "summary/include fields and a route the transport judged as taking no reasoning field "
             "are left exactly as built, so the plugin can add a level but never a field."
         ),
+        # Every Codex id accepts low/medium/high/max (Luna also accepts none and xhigh, Sol
+        # accepts xhigh), so the question offers the four levels this plugin's vocabulary has —
+        # the same set the operator's ``effort_maps`` used to declare for this route.
+        offered=("low", "medium", "high", "max"),
     )
     for model_id, levels in CODEX_MODEL_LEVELS
 }
@@ -954,19 +962,18 @@ def offered_levels(
 ) -> Tuple[str, ...]:
     """The effort levels the question may offer a route, in ``EFFORT_LEVELS`` order.
 
-    A route is only asked for levels its own ``effort_maps`` entry declares: offering ``max``
-    where the declaration does not have it would spend the decision on an answer the router
-    would then omit. With no map entry for the route (or none for this model) the three-level
-    default applies — ``max`` is offered only where a declaration proves the route accepts it.
-    Built-in policies are deliberately *not* consulted here, even where they declare ``max``
-    (``opencode-go``, ``commandcode``, ``codex``): a level stronger than ``high`` is offered only
-    under an explicit declaration, and for those routes that declaration is the operator's.
+    The operator's declaration decides first. A route is only asked for levels its own
+    ``effort_maps`` entry declares: offering ``max`` where the declaration does not have it would
+    spend the decision on an answer the router would then omit. An entry that declares nothing
+    usable leaves the default.
 
-    The one exception is a built-in policy that carries its **own** offered set
-    (``ModelReasoningPolicy.offered``). Only the ``anthropic`` route ships one — the planner
-    re-decided that route's ceiling family by family (Haiku up to ``max``, Sonnet/Opus up to
-    ``high``) — so this branch cannot widen any other route's question: every other policy leaves
-    the field empty and keeps the three-level default.
+    With no map entry for the route (or none for this model), the route's built-in policy answers
+    from its own offered set (``ModelReasoningPolicy.offered``), which is where the wire contract
+    lives now: ``opencode-go``, ``commandcode`` and ``openai-codex`` offer
+    ``low``/``medium``/``high``/``max`` — each model's accepted set includes all four — and
+    ``anthropic`` offers its capped family range (Haiku up to ``max``, Sonnet/Opus up to ``high``).
+    Every other built-in policy leaves the field empty and keeps the three-level default, so a
+    route with nothing declared never gains ``max`` by accident.
 
     A declaration that shares no level with the askable vocabulary (``accepted: [minimal]``, or
     an entry that deliberately declares nothing) is unusable *for this question*: the default
