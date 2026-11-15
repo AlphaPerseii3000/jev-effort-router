@@ -1,0 +1,17 @@
+{
+  "_comment": "The target per-profile block (SPEC-simplificacao-config.md §2), nine YAML lines: the seven settings below plus the 'jev-effort-router:' and 'settings:' keys. No 'grids' and no 'effort_maps': the catalog and the effort contract come from the code.",
+  "decider": "jev_console",
+  "console_api_key_env": "OPENCODE_GO_API_KEY",
+  "console_jev_fallback_model": "",
+  "console_jev_commandcode_base_url": "https://api.commandcode.ai/provider/v1/systemone",
+  "timeout_s": 3.0,
+  "routable_providers": [
+    "opencode-go",
+    "commandcode",
+    "openai-codex",
+    "anthropic"
+  ],
+  "session_selection": {
+    "mode": "apply"
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "_comment": "The per-profile block as it stood before the simplification: a literal transcription of /home/rafael/hermes/home/profiles/planner/config.yaml lines 170-219 (the plugins.entries.jev-effort-router.settings mapping, YAML -> JSON). Kept verbatim, including the keys that already matched a code default, so the equivalence test compares the real block and not an idealised one.",
+  "enabled": true,
+  "decider": "jev_console",
+  "console_api_key_env": "OPENCODE_GO_API_KEY",
+  "console_jev_model": "jev-1.13-free",
+  "console_jev_fallback_model": "",
+  "routable_providers": [
+    "opencode-go",
+    "commandcode",
+    "openai-codex",
+    "anthropic"
+  ],
+  "grids": {
+    "opencode-go": [
+      "deepseek-v4.1-flash: general work, explanation, ordinary coding and tool use"
+    ],
+    "commandcode": [
+      "deepseek/deepseek-v4.1-flash: general work, explanation, ordinary coding and tool use"
+    ],
+    "openai-codex": [
+      "gpt-6-luna: general work, coding, explanation and tool use",
+      "gpt-6-luna-900k: general work and coding over a 900k context window (large repos, long documents)",
+      "gpt-6.1-sol: harder reasoning, architecture, planning and long-context analysis"
+    ],
+    "anthropic": [
+      "claude-haiku-5-5: routine and well-scoped agentic coding, quick edits, summaries, extraction, classification and other high-volume chores",
+      "claude-sonnet-5-5: human-facing messages and writing, careful single-file or refined code changes, code review",
+      "claude-opus-5-5: planning, orchestration, architecture, multi-step debugging and deep analysis"
+    ]
+  },
+  "effort_maps": {
+    "opencode-go": {
+      "deepseek-v4.1-flash": {
+        "accepted": ["low", "medium", "high", "max"],
+        "overrides": {"xhigh": "max"}
+      }
+    },
+    "commandcode": {
+      "deepseek/deepseek-v4.1-flash": {
+        "accepted": ["low", "medium", "high", "max"],
+        "overrides": {"xhigh": "max"}
+      }
+    },
+    "openai-codex": {
+      "gpt-6-luna": {
+        "accepted": ["none", "low", "medium", "high", "xhigh", "max"]
+      },
+      "gpt-6-luna-900k": {
+        "accepted": ["none", "low", "medium", "high", "xhigh", "max"]
+      },
+      "gpt-6.1-sol": {
+        "accepted": ["low", "medium", "high", "xhigh", "max"]
+      }
+    }
+  },
+  "console_jev_commandcode_base_url": "https://api.commandcode.ai/provider/v1/systemone",
+  "console_jev_commandcode_api_key_env": "COMMANDCODE_API_KEY",
+  "console_jev_commandcode_model": "typesafe/jev",
+  "timeout_s": 3.0,
+  "session_selection": {
+    "mode": "apply",
+    "platforms": ["webui"]
+  }
+}
