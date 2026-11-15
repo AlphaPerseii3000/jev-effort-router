@@ -96,7 +96,7 @@ Requirements: **Hermes Agent** with the `llm_request` middleware kind (0.21.4 or
    - Uses OpenCode Console SystemOne API (`https://opencode.ai/inference/systemone/v1/systemone`) with `OPENCODE_CONSOLE_API_KEY`.
    - Decider model: primary `console_jev_model` (`jev-1.13-free`) with automatic fallback iteration to `console_jev_fallback_model` (`jev-1.13`, standard/paid Jev).
    - Optional third host: `console_jev_commandcode_base_url` + `console_jev_commandcode_api_key_env` + `console_jev_commandcode_model` add a CommandCode SystemOne fallback, consulted once after the Console chain fails *technically*. All three must be set; empty means off. That upstream has no ZDR agreement, so read `docs/jev-decisions-api.md` (§ Wire 4) before enabling it — it changes where routing context may be retained.
-   - Routes generation models: per the owner's route-reconciliation directive (Comment 108), Jev SystemOne operates as decider, while downstream generation of `deepseek-v4.1-flash` is routed via `opencode-go`. While this decider is active the `opencode-go` route is capped to that single model (configured grid entries outside the catalog are dropped, and no choice, fallback, alternative or replay can escape it), and the `opencode-console` route serves only `deepseek-v4.1-flash`. The same opt-in cap applies to the `commandcode` route, whose catalog is the one namespaced id `deepseek/deepseek-v4.1-flash`, and to `openai-codex`, whose catalog is the three `gpt-6*` picker ids. Those three OpenCode/CommandCode catalogs name a single model, so the model question is degenerate there and the decider effectively chooses only the reasoning level; the Codex catalog carries two families with different effort ladders. The opt-in `anthropic` route carries three families (Haiku, Sonnet, Opus) with a per-family effort cap: Haiku up to `max`, Sonnet and Opus up to `high`. The opt-in `claude-subscription-directsdk-experimental` route serves the same three families through the Claude Code CLI, with the same caps and a different wire (`extra_body.reasoning.effort`); it is a separate provider, never an alias of `anthropic`, so declaring one does not route the other. See `docs/routing-grid.md` and `docs/EVIDENCIAS_OPERACIONAIS.md` for details.
+   - Routes generation models: per the owner's route-reconciliation directive (Comment 108), Jev SystemOne operates as decider, while downstream generation of `deepseek-v4.1-flash` is routed via `opencode-go`. While this decider is active the `opencode-go` route is capped to that single model (configured grid entries outside the catalog are dropped, and no choice, fallback, alternative or replay can escape it), and the `opencode-console` route serves only `deepseek-v4.1-flash`. The same opt-in cap applies to the `commandcode` route, whose catalog is the one namespaced id `deepseek/deepseek-v4.1-flash`, and to `openai-codex`, whose catalog is the three `gpt-6*` picker ids. Those three OpenCode/CommandCode catalogs name a single model, so the model question is degenerate there and the decider effectively chooses only the reasoning level; the Codex catalog carries two families with different effort ladders. The opt-in `anthropic` route carries three families (Haiku, Sonnet, Opus) with a per-family effort cap: Haiku up to `max`, Sonnet and Opus up to `high`. See `docs/routing-grid.md` and `docs/EVIDENCIAS_OPERACIONAIS.md` for details.
 3. **`decider: openai_compatible` (OpenCode Go / Generic)**:
    - Uses OpenAI-compatible chat completions (`https://opencode.ai/zen/go/v1/chat/completions`) with `OPENCODE_GO_API_KEY`.
    - Decider model: `decider_model` (e.g. `deepseek-v4.1-flash`).
@@ -258,20 +258,7 @@ plugins:
               - "claude-opus-5-5: planning, orchestration, architecture, multi-step debugging and deep analysis"
   ```
   Its catalog (`ANTHROPIC_GRID`) carries one id per family, copied from the provider's own model list (the Hermes cache at `<HERMES_HOME>/provider_models_cache.json` → `anthropic`), and the effort caps are per family: `low`/`medium`/`high` on Sonnet and Opus, plus `max` on Haiku. `claude-sonnet-5-5` is the route's default model, i.e. what a degraded turn keeps. The level is written to `output_config.effort` inside the `output_config` the transport already built — never to a top-level `reasoning_effort`, which is not a Messages field, and never by adding the container itself.
-- **The Claude subscription route (`claude-subscription-directsdk-experimental`)**: Claude Pro/Max through the official Claude Code CLI — a **different provider** from `anthropic`, not an alias of it, so declaring one never routes the other. It speaks `chat_completions`, and its level rides in `extra_body.reasoning.effort`: the provider's `build_api_kwargs_extras` hands `{"reasoning": …}` to the transport, and the plugin rewrites only that object's `effort`. Declare it like any other route:
-  ```yaml
-          routable_providers:
-            - claude-subscription-directsdk-experimental
-          grids:
-            claude-subscription-directsdk-experimental:
-              - "claude-haiku-5-5: routine and well-scoped agentic coding, quick edits, summaries, extraction, classification and other high-volume chores"
-              - "claude-sonnet-5-5: human-facing messages and writing, careful single-file or refined code changes, code review"
-              - "claude-opus-5-5: planning, orchestration, architecture, multi-step debugging and deep analysis"
-  ```
-  Its catalog (`SUBSCRIPTION_GRID`) carries the same three native ids (the provider's own `model_catalog.py` pins them) with the same per-family caps — Haiku up to `max`, Sonnet/Opus up to `high` — but `claude-opus-5-5` is the route's default model: this route exists to serve planner/reviewer work, so a degraded turn keeps the planning family. The rewrite is narrow by construction: the `reasoning` object and the `extra_body` around it belong to the provider/transport, so the plugin creates neither, preserves `reasoning.enabled` and every other key, never writes a top-level `reasoning_effort` (the provider rejects that kwarg), and leaves a `reasoning` object the transport disabled (`enabled: false`) untouched — the audit then reports `effort: null` while `effort_requested` keeps Jev's choice.
-- **Authentication**: `decider_api_key_env` names the environment variable containing the key (e.g. `OPENCODE_GO_API_KEY`). The secret itself is never written to configuration files or audit logs.
-- **Confidence**: For TypeSafe Jev (`jev`), confidence reflects a mathematically calibrated probability distribution. For `openai_compatible`, confidence is an LLM self-reported heuristic score parsed from the model's JSON response, strictly validated to be a finite float in `[0.0, 1.0]`.
-- **Effort verification**: Reasoning effort levels are never guessed. Each opt-in route declares its own contract in `effort.py`: `opencode-go` and `commandcode` both send the decided level as a top-level `reasoning_effort` (`low`/`medium`/`high`/`max`, with `xhigh` mapped onto `max` by the same declared override the Hermes core uses, probe-confirmed on 2026-10-20 against `POST https://opencode.ai/zen/go/v1/chat/completions` and `POST https://api.commandcode.ai/provider/v1/chat/completions` respectively), while `opencode-console` keeps omitting the plugin's own field. On `commandcode` that level rides beside the `extra_body.thinking` toggle the provider profile derives, never instead of it. A level outside a route's declared set (`minimal`, `none`, an unknown string) is omitted rather than clamped, and an operator `effort_maps` entry still overrides the built-in policy. That override is the custom path, not a merge: a matched model entry **replaces** the built-in policy's vocabulary, level for level — declare everything the route should accept, including any `xhigh → max` mapping, because nothing is inherited from the built-in policy. Add an entry only when deliberately narrowing a route; for `commandcode` the reference profile carries none. The entry also decides what the effort question may ask for: `max` is offered only where the route declares it — the operator's `effort_maps` entry, or (on the two Claude routes, `anthropic` and `claude-subscription-directsdk-experimental`) the route's own per-family cap, which is Haiku's `max` and nobody else's. `max_effort` in a platform policy accepts `max` and remains the operator's ceiling on what actually runs.
+- **Effort verification**: Reasoning effort levels are never guessed. Each opt-in route declares its own contract in `effort.py`: `opencode-go` and `commandcode` both send the decided level as a top-level `reasoning_effort` (`low`/`medium`/`high`/`max`, with `xhigh` mapped onto `max` by the same declared override the Hermes core uses, probe-confirmed on 2026-10-20 against `POST https://opencode.ai/zen/go/v1/chat/completions` and `POST https://api.commandcode.ai/provider/v1/chat/completions` respectively), while `opencode-console` keeps omitting the plugin's own field. On `commandcode` that level rides beside the `extra_body.thinking` toggle the provider profile derives, never instead of it. A level outside a route's declared set (`minimal`, `none`, an unknown string) is omitted rather than clamped, and an operator `effort_maps` entry still overrides the built-in policy. That override is the custom path, not a merge: a matched model entry **replaces** the built-in policy's vocabulary, level for level — declare everything the route should accept, including any `xhigh → max` mapping, because nothing is inherited from the built-in policy. Add an entry only when deliberately narrowing a route; for `commandcode` the reference profile carries none. The entry also decides what the effort question may ask for: `max` is offered only where the route declares it — the operator's `effort_maps` entry, or (on `anthropic`) the route's own per-family cap, which is Haiku's `max` and nobody else's. `max_effort` in a platform policy accepts `max` and remains the operator's ceiling on what actually runs.
 
 ### Per-surface routing policy (`platform_overrides`)
 
@@ -322,8 +309,7 @@ plugins:
         session_selection:
           mode: apply                    # off (default) | warn | apply
           platforms: [webui]             # surfaces whose row is authoritative
-          provider_map:
-            anthropic: claude-subscription-directsdk-experimental
+          provider_map: {}               # default: identity only
 ```
 
 - `mode: off` is the default and the pre-feature behaviour, byte for byte: the row is not read at
@@ -332,19 +318,13 @@ plugins:
   leaves the request untouched.
 - `mode: apply` does the same and additionally rewrites a **fail-open** turn to the session's model
   and effort: the model through `wire_model_for`, the level through the route's own effort policy,
-  so caps still omit a level they do not accept and `reasoning.enabled: false` is preserved. The
-  `skip` record then carries `reconciled_model`, `reconciled_effort` and
+  so caps still omit a level they do not accept and a container the transport did not build is never
+  invented. The `skip` record then carries `reconciled_model`, `reconciled_effort` and
   `selection_source: session_row`.
 - `provider_map` adds a **second** route a selection is also valid on; identity (the selection's own
-  route, aliases included) always is. The default maps the native `anthropic` pick onto the
-  subscription route, which is what reconciles a pick that arrived after the agent was built on
-  either Claude route: the race is patched on both, and the map no longer forbids the route the row
-  itself names.
-- A model id on `claude-subscription-directsdk-experimental` may end in `[1m]`. The suffix is the
-  caller's 1M window, not another model: the grid, catalog, memo and selection comparisons use the
-  bare id and the wire carries it back (`claude-haiku-5-5[1m]`), which is the id the provider's own
-  `native_model` pins. The audit keeps `configured_model` and adds `normalized_model`. The native
-  `anthropic` route declares no such variant — its 1M window is the beta header's.
+  route, aliases included) always is. Its default is `{}`, i.e. identity only: since 0.8.0 the
+  plugin no longer translates a pick onto a route the row did not name unless an operator declares
+  that translation.
 - Nothing is reconciled when the router may not override the request: `enabled: false`, a
   `provider_not_routed` (`selection_native_provider` is recorded instead — out of the build race the
   plugin can only report the turn), `api_mode_not_routed` or `surface_disabled`.
@@ -453,16 +433,6 @@ only that effort value, inside the object the transport built. A body the transp
 `output_config` — a pre-adaptive-thinking Claude, reasoning disabled, or a container carrying only
 `format` — gets no `effort` invented, and the audit then reports `effort: null`. Its caps are per family:
 Haiku `low`–`max`, Sonnet and Opus `low`–`high`, and a level outside a family's cap is omitted, not clamped.
-
-`claude-subscription-directsdk-experimental` is a third exception, and a different provider from
-`anthropic` even though it serves the same three families. Its field is **`extra_body.reasoning.effort`**:
-the profile's `build_api_kwargs_extras` returns `{"reasoning": …}`, the core nests it in `extra_body`, and
-the plugin rewrites only the `effort` inside that object — `enabled` and the sibling keys stay, and neither
-`reasoning` nor `extra_body` is ever created. A `reasoning` object the transport disabled (`enabled:
-false`) is left as built and the audit reports `effort: null`. A top-level `reasoning_effort` must never be
-written here: it is not in the provider's allowed kwargs, and the request is refused before Claude Code is
-spawned. The transport is chosen by a declared `config.wire_style` (`extra_body_reasoning`) rather than by a
-provider test inside the router.
 
 ## Audit trail
 

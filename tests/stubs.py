@@ -201,42 +201,6 @@ def anthropic_request(
     return request
 
 
-def subscription_request(
-    *,
-    model: str = "claude-sonnet-5-5",
-    messages: Optional[List[Dict[str, Any]]] = None,
-    effort: str = "medium",
-    enabled: bool = True,
-    extra_body: Optional[Dict[str, Any]] = None,
-    include_reasoning: bool = True,
-    include_extra_body: bool = True,
-) -> Dict[str, Any]:
-    """A chat-completions kwargs payload for the Claude subscription route.
-
-    The provider's ``build_api_kwargs_extras`` returns ``{"reasoning": dict(reasoning_config)}`` and
-    the core puts it in ``api_kwargs["extra_body"]``, so the body the ``llm_request`` middleware
-    receives already carries ``extra_body.reasoning`` with the session's ``enabled``/``effort``.
-    There is no top-level ``reasoning_effort``: it is not among the provider's allowed kwargs.
-
-    ``include_reasoning=False`` reproduces a call the profile's extras never touched (no
-    ``reasoning_config``), and ``include_extra_body=False`` one with no ``extra_body`` at all —
-    neither container is the plugin's to create. ``extra_body`` merges extra keys into the object,
-    the way ``reasoning_config``-derived siblings (``max_tokens``/``stop_sequences``) coexist.
-    """
-    request: Dict[str, Any] = {
-        "model": model,
-        "messages": messages if messages is not None else [{"role": "user", "content": "hello"}],
-        "max_tokens": 4096,
-        "tools": [],
-    }
-    if include_extra_body:
-        body: Dict[str, Any] = dict(extra_body or {})
-        if include_reasoning:
-            body["reasoning"] = {"enabled": enabled, "effort": effort}
-        request["extra_body"] = body
-    return request
-
-
 class Registration:
     def __init__(self, kind: str, name: str) -> None:
         self.kind = kind

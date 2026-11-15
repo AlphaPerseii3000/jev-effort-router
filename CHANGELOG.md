@@ -4,6 +4,44 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.0] - 2026-11-15
+
+### Removed (breaking)
+
+- **The `claude-subscription-directsdk-experimental` route is gone.** Its provider plugin left the host
+  on 2026-11-15, no profile listed it under `routable_providers` (0/9 configs), and the operator's
+  standing rule is not to reintroduce the dependency. Everything the route owned was deleted, not
+  merely disabled:
+  - `config.py`: `CLAUDE_SUBSCRIPTION_PROVIDER/_ALIASES/_MODELS/_ALLOWLIST`, its entries in
+    `_GRID_ALIASES` and `ROUTE_DEFAULT_MODELS`, and its branches in `route_allowlist` and
+    `route_catalog`.
+  - `grid.py`: `SUBSCRIPTION_GRID`. `effort.py`: `SUBSCRIPTION_MODEL_LEVELS`,
+    `SUBSCRIPTION_REASONING_POLICIES`, its `WIRE_PARAMETERS` entry and the subscription branch of
+    `model_reasoning_policy`.
+  - `router.py`: `_apply_extra_body_reasoning` and every `extra_body_reasoning` branch.
+- **The route-specific wire-style layer.** `WIRE_STYLE_EXTRA_BODY_REASONING` and `ROUTE_WIRE_STYLES` are
+  removed: with its only entry gone the table could no longer change a payload, so `config.wire_style`
+  now answers from `API_MODE_WIRE_STYLES` alone and `wire_style`/`wire_effort`/`Router._apply`/
+  `Router._rewrite`/`Router._applied_decision` no longer take a provider argument they cannot use.
+- **The `[1m]` context variant.** `CONTEXT_VARIANT_SUFFIXES`, `context_variant_suffixes`,
+  `split_context_variant` and their call sites are removed, together with the audit keys that only
+  existed for them (`normalized_model`, and `configured_model` on a `route` record). Model ids are now
+  compared and sent exactly as configured. The native `anthropic` route never needed this: its 1M
+  window is the `context-1m-2025-08-07` beta header, and an unexpected `[1m]` there stays a
+  `model_not_in_grid` skip.
+- `tests/test_subscription_route.py`, the `[1m]`/both-routes cases of
+  `tests/test_anthropic_native_and_variant.py` (now `tests/test_anthropic_native.py`) and
+  `tests.stubs.subscription_request`.
+
+### Changed
+
+- **`session_selection.provider_map` defaults to `{}`** (identity only) instead of
+  `anthropic -> claude-subscription-directsdk-experimental`. A selection is still eligible on its own
+  route, aliases included; the map only *adds* a second route a pick is also valid on, and an operator
+  who wants that translation now declares it. `plugin.yaml` and the README say so.
+- The session-selection suite runs on the native `anthropic` route (`output_config.effort`), and
+  `plugin.yaml`/`pyproject.toml` say `0.8.0`.
+
 ## [0.7.0] - 2026-11-15
 
 ### Changed

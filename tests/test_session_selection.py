@@ -13,34 +13,27 @@ The five properties under test:
 3. ``apply`` reconciles a **fail-open** turn only. A successful decision wins, and the gates the
    router may not override (``disabled``, ``provider_not_routed``, ``api_mode_not_routed``) never
    reconcile.
-4. The reconciled level goes through the same route policy as a decided one: ``extra_body.reasoning
-   .effort`` on the subscription route, caps respected by omission, ``reasoning.enabled: false``
-   preserved, and never a top-level ``reasoning_effort``.
+4. The reconciled level goes through the same route policy as a decided one: ``output_config.effort``
+   on the native ``anthropic`` route, caps respected by omission, and never a level written into a
+   container the transport did not build.
 5. Every unreadable row — absent, locked, invalid JSON, another component's shape — fails open
    silently (``DEBUG`` only), never raising.
 
 The row fixture is the **real** one the job-search session wrote
 (``profiles/job-search/state.db``, session ``20261111_180552_34faa4``): the UI chose
 ``claude-haiku-5-5`` on ``anthropic`` with effort ``medium``, while the agent ran
-``claude-sonnet-5-5`` with effort ``high`` on the subscription route.
+``claude-sonnet-5-5`` with effort ``high`` on the same route.
 """
 
 from __future__ import annotations
 
-import copy
 import json
 import logging
 import sqlite3
 
 import pytest
-from stubs import StubResponse, StubTransport, decision_payload, subscription_request
+from stubs import StubResponse, StubTransport, anthropic_request, decision_payload
 from test_router import build, route
-from test_subscription_route import (
-    PROVIDER_ALLOWED_EXTRA_BODY,
-    PROVIDER_ALLOWED_KWARGS,
-    PROVIDER_ALLOWED_REASONING,
-    PROVIDER_EFFORT_VOCAB,
-)
 
 import selection
 from config import (
@@ -55,7 +48,6 @@ from config import (
 )
 from router import wire_effort
 
-PROVIDER = "claude-subscription-directsdk-experimental"
 NATIVE = "anthropic"
 HAIKU = "claude-haiku-5-5"
 SONNET = "claude-sonnet-5-5"
@@ -87,7 +79,7 @@ JOB_SEARCH_MODEL_CONFIG = {
 def _config(mode: str, **overrides):
     config = {
         "decider": "jev_console",
-        "routable_providers": [PROVIDER],
+        "routable_providers": [NATIVE],
         "session_selection": {"mode": mode},
     }
     config.update(overrides)
@@ -129,16 +121,16 @@ def profile(tmp_path, monkeypatch):
 
 
 def call(
-    router, request=None, *, model=SONNET, effort="high", provider=PROVIDER, platform="webui",
+    router, request=None, *, model=SONNET, effort="high", provider=NATIVE, platform="webui",
     turn_id="turn-1", session_id=SESSION_ID, **overrides
 ):
-    """One provider request on the subscription route (``extra_body.reasoning`` shape)."""
-    request = request if request is not None else subscription_request(model=model, effort=effort)
+    """One provider request on the native ``anthropic`` route (``output_config`` shape)."""
+    request = request if request is not None else anthropic_request(model=model, effort=effort)
     kwargs = {
         "model": model,
         "provider": provider,
-        "base_url": "https://subscription.invalid",
-        "api_mode": "chat_completions",
+        "base_url": "https://api.anthropic.com",
+        "api_mode": "anthropic_messages",
         "platform": platform,
         "turn_id": turn_id,
         "session_id": session_id,
@@ -172,45 +164,20 @@ def last_skip(router, settings):
 
 
 def wire_level(routed):
-    return wire_effort(routed, PROVIDER, "chat_completions")
-
-
-def provider_body(kwargs):
-    """A local reproduction of ``directsdk.request_body`` (0.3.4), the gate the wire must pass.
-
-    It raises on a kwarg outside the provider's allowlist, pops ``extra_body.reasoning``, refuses
-    any key but ``enabled``/``effort``, and turns the level into ``output_config.effort``. The
-    constants are the provider's own, shared with ``tests/test_subscription_route.py``; the parse
-    itself is reproduced rather than imported, exactly as that module does for the decided body.
-    """
-    unknown = set(kwargs) - PROVIDER_ALLOWED_KWARGS
-    assert not unknown, f"provider rejects these kwargs: {sorted(unknown)}"
-    extra = kwargs.get("extra_body") or {}
-    assert set(extra) <= PROVIDER_ALLOWED_EXTRA_BODY, sorted(set(extra) - PROVIDER_ALLOWED_EXTRA_BODY)
-    body = copy.deepcopy(extra)
-    reasoning = body.pop("reasoning", None)
-    output_config = {}
-    if reasoning is not None:
-        assert set(reasoning) <= PROVIDER_ALLOWED_REASONING
-        assert "reasoning_effort" not in kwargs
-        effort = reasoning.get("effort")
-        assert effort is None or effort in PROVIDER_EFFORT_VOCAB
-        if reasoning.get("enabled") is not False and effort:
-            output_config = {"effort": effort}
-    return body, output_config
+    return wire_effort(routed, "anthropic_messages")
 
 
 # -- the configuration ---------------------------------------------------------
 
 
 def test_session_selection_defaults_keep_the_plugin_out_of_the_database():
-    """The default has to be ``off``, on the webui, with the native→subscription translation."""
+    """The default has to be ``off``, on the webui, with an identity-only provider map."""
     parsed = load_settings(lambda key, default=None: default).session_selection
 
     assert parsed.mode == SESSION_SELECTION_OFF == "off"
     assert parsed.platforms == DEFAULT_SESSION_SELECTION_PLATFORMS == ("webui",)
-    assert dict(parsed.provider_map) == dict(DEFAULT_SESSION_SELECTION_PROVIDER_MAP)
-    assert parsed.provider_map[NATIVE] == PROVIDER
+    assert dict(parsed.provider_map) == dict(DEFAULT_SESSION_SELECTION_PROVIDER_MAP) == {}
+    assert parsed.provider_for(NATIVE) == NATIVE
     assert not parsed.enabled and not parsed.applies and not parsed.warns
 
 
@@ -243,13 +210,13 @@ def test_an_unusable_platform_list_or_provider_map_falls_back_with_a_warning(cap
         "cli",
         "webui",
     )
-    # A map that is not a mapping keeps the built-in translation; an explicitly empty one disables
-    # it, which is a declaration, not an error.
+    # A map that is not a mapping keeps the built-in default; an explicitly empty one is a
+    # declaration, not an error.
     assert dict(parse_session_selection({"provider_map": "anthropic"}).provider_map) == dict(
         DEFAULT_SESSION_SELECTION_PROVIDER_MAP
     )
-    assert dict(parse_session_selection({"provider_map": {"Anthropic": PROVIDER}}).provider_map) == {
-        NATIVE: PROVIDER
+    assert dict(parse_session_selection({"provider_map": {"Anthropic": "opencode-go"}}).provider_map) == {
+        NATIVE: "opencode-go"
     }
     assert dict(parse_session_selection({"provider_map": {}}).provider_map) == {}
     assert any("platforms" in record.message for record in caplog.records)
@@ -309,9 +276,9 @@ def test_unusable_rows_are_no_evidence(raw, caplog):
 
 
 def test_a_row_without_reasoning_reports_no_level_rather_than_a_default():
-    parsed = selection.parse_model_config(json.dumps({"model": SONNET, "provider": PROVIDER}))
+    parsed = selection.parse_model_config(json.dumps({"model": SONNET, "provider": NATIVE}))
 
-    assert parsed == selection.Selection(model=SONNET, provider=PROVIDER, effort=None, enabled=None)
+    assert parsed == selection.Selection(model=SONNET, provider=NATIVE, effort=None, enabled=None)
 
 
 def test_a_missing_database_or_row_is_no_evidence(profile):
@@ -375,8 +342,8 @@ def test_the_job_search_race_turn_runs_on_the_sessions_haiku_not_the_profiles_so
 ):
     """T1 — request Sonnet/high, decider low_confidence, row Haiku/anthropic/medium.
 
-    The turn must go out as ``claude-haiku-5-5`` with ``extra_body.reasoning.effort=medium`` on the
-    subscription route, and the audit must say the skip was reconciled and why.
+    The turn must go out as ``claude-haiku-5-5`` with ``output_config.effort=medium`` on the native
+    route, and the audit must say the skip was reconciled and why.
     """
     caplog.set_level(logging.WARNING)
     write_row(profile, JOB_SEARCH_MODEL_CONFIG)
@@ -388,8 +355,9 @@ def test_the_job_search_race_turn_runs_on_the_sessions_haiku_not_the_profiles_so
     assert result is not None
     routed = result["request"]
     assert routed["model"] == HAIKU
-    assert routed["extra_body"]["reasoning"] == {"enabled": True, "effort": "medium"}
+    assert routed["output_config"] == {"effort": "medium"}
     assert "reasoning_effort" not in routed
+    assert routed["thinking"] == {"type": "adaptive", "display": "summarized"}
     assert result["source"] == "jev-effort-router"
 
     skip = last_skip(router, settings)
@@ -403,7 +371,7 @@ def test_the_job_search_race_turn_runs_on_the_sessions_haiku_not_the_profiles_so
     assert divergence["session_model"] == HAIKU
     assert divergence["session_provider"] == NATIVE
     assert divergence["session_effort"] == "medium"
-    assert divergence["mapped_provider"] == PROVIDER
+    assert divergence["mapped_provider"] == NATIVE
     assert divergence["request_model"] == SONNET
     assert divergence["request_effort"] == "high"
     assert divergence["action"] == "reconcile_on_fail_open"
@@ -413,16 +381,28 @@ def test_the_job_search_race_turn_runs_on_the_sessions_haiku_not_the_profiles_so
     )
 
 
-def test_the_reconciled_body_survives_the_providers_own_parser(profile, tmp_path):
-    """T1b — the rewritten body, through the provider's allowlists and effort parse."""
+def test_the_reconciled_body_keeps_the_transports_containers(profile, tmp_path):
+    """T1b — the rewritten body keeps the Messages shape the transport built."""
     write_row(profile, JOB_SEARCH_MODEL_CONFIG)
     transport = low_confidence_transport()
     router, _ = build(tmp_path, transport, config=_config("apply"))
 
     routed = call(router)["request"]
 
-    _, output_config = provider_body(routed)
-    assert output_config == {"effort": "medium"}
+    # The transport authored ``thinking`` and ``output_config``; the plugin rewrites the level
+    # inside the object that already exists and adds no other container.
+    assert routed["output_config"] == {"effort": "medium"}
+    assert routed["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert "extra_body" not in routed and "reasoning_effort" not in routed
+    assert set(routed) == {
+        "model",
+        "messages",
+        "max_tokens",
+        "system",
+        "tools",
+        "thinking",
+        "output_config",
+    }
 
 
 def test_the_second_call_of_the_turn_replays_the_same_rewrite(profile, tmp_path):
@@ -510,7 +490,7 @@ def test_a_successful_decision_wins_and_the_divergence_is_only_audited(profile, 
     result = call(router)
 
     assert result["request"]["model"] == OPUS
-    assert result["request"]["extra_body"]["reasoning"]["effort"] == "low"
+    assert result["request"]["output_config"]["effort"] == "low"
     assert events(router, settings, "route")[-1]["model"] == OPUS
     assert events(router, settings, "selection_divergence")[-1]["action"] == "reconcile_on_fail_open"
     assert all("reconciled_model" not in record for record in records(router, settings))
@@ -521,12 +501,15 @@ def test_a_successful_decision_wins_and_the_divergence_is_only_audited(profile, 
 
 def test_a_selection_for_another_provider_is_unmappable_and_changes_nothing(profile, tmp_path):
     """T6a — the provider the row names does not translate to the request's provider."""
-    write_row(profile, JOB_SEARCH_MODEL_CONFIG)
+    write_row(
+        profile,
+        {"model": HAIKU, "provider": "openai-codex", "reasoning_config": {"effort": "medium"}},
+    )
     transport = low_confidence_transport()
     config = _config("apply")
     config["session_selection"] = {
         "mode": "apply",
-        "provider_map": {NATIVE: "some-other-route"},
+        "provider_map": {"openai-codex": "some-other-route"},
     }
     router, settings = build(tmp_path, transport, config=config)
 
@@ -537,6 +520,47 @@ def test_a_selection_for_another_provider_is_unmappable_and_changes_nothing(prof
     assert unmappable["session_model"] == HAIKU
     assert unmappable["mapped_provider"] == "some-other-route"
     assert "reconciled_model" not in last_skip(router, settings)
+
+
+def test_a_declared_provider_map_reconciles_a_selection_for_another_provider(profile, tmp_path):
+    """T6a' — ``provider_map`` is opt-in translation, so a declared pair is load-bearing.
+
+    ``openai-codex`` is neither ``anthropic`` nor an alias of it: identity alone answers
+    ``provider_mismatch`` and the row is discarded. The map declares the pair, the model is in the
+    route's catalog and in the surface's grid, and ``apply`` reconciles the fail-open turn onto it
+    — model and level both on the wire.
+    """
+    write_row(
+        profile,
+        {
+            "model": HAIKU,
+            "provider": "openai-codex",
+            "reasoning_config": {"enabled": True, "effort": "high"},
+        },
+    )
+    transport = low_confidence_transport()
+    config = _config("apply")
+    config["session_selection"] = {
+        "mode": "apply",
+        "provider_map": {"openai-codex": NATIVE},
+    }
+    router, settings = build(tmp_path, transport, config=config)
+
+    result = call(router, anthropic_request(model=SONNET, effort="low"))
+
+    assert result is not None
+    assert events(router, settings, "selection_unmappable") == []
+    routed = result["request"]
+    assert routed["model"] == HAIKU
+    assert routed["output_config"] == {"effort": "high"}
+    assert wire_level(routed) == "high"
+    skip = last_skip(router, settings)
+    assert skip["reconciled_model"] == HAIKU
+    assert skip["reconciled_effort"] == "high"
+    divergence = events(router, settings, "selection_divergence")[-1]
+    assert divergence["session_provider"] == "openai-codex"
+    assert divergence["mapped_provider"] == NATIVE
+    assert divergence["action"] == "reconcile_on_fail_open"
 
 
 def test_a_model_outside_the_routes_catalog_is_unmappable(profile, tmp_path):
@@ -553,7 +577,7 @@ def test_a_model_outside_the_surfaces_grid_is_unmappable(profile, tmp_path):
     """T6c — the grid is the choice set: a model the route serves but this surface forbids stays out."""
     write_row(profile, JOB_SEARCH_MODEL_CONFIG)
     transport = low_confidence_transport()
-    config = _config("apply", grids={PROVIDER: [f"{SONNET}: the only model this surface offers"]})
+    config = _config("apply", grids={NATIVE: [f"{SONNET}: the only model this surface offers"]})
     router, settings = build(tmp_path, transport, config=config)
 
     assert call(router) is None
@@ -571,7 +595,7 @@ def test_a_row_that_agrees_with_the_request_produces_no_divergence(profile, tmp_
         profile,
         {
             "model": SONNET,
-            "provider": PROVIDER,
+            "provider": NATIVE,
             "reasoning_config": {"enabled": True, "effort": "high"},
         },
     )
@@ -638,18 +662,25 @@ def test_a_locked_database_keeps_todays_fail_open(profile, tmp_path):
 # -- T9/T10: what the level may and may not do ---------------------------------
 
 
-def test_a_request_with_reasoning_disabled_gets_the_model_and_keeps_its_level(
+def test_a_payload_without_an_effort_container_gets_the_model_and_no_invented_field(
     profile, tmp_path
 ):
-    """T9 — ``enabled: false`` is the session's, not this router's, to change."""
+    """T9 — the transport built no ``output_config`` (reasoning disabled): nothing is invented.
+
+    The reconciled model still reaches the wire; the level does not, because the container the
+    level lives in is the transport's and this router never creates it. The audit reports the
+    omission rather than a level nobody wrote.
+    """
     write_row(profile, JOB_SEARCH_MODEL_CONFIG)
     transport = low_confidence_transport()
-    router, _ = build(tmp_path, transport, config=_config("apply"))
+    router, settings = build(tmp_path, transport, config=_config("apply"))
 
-    routed = call(router, subscription_request(model=SONNET, enabled=False, effort="high"))["request"]
+    routed = call(router, anthropic_request(model=SONNET, thinking=False))["request"]
 
     assert routed["model"] == HAIKU
-    assert routed["extra_body"]["reasoning"] == {"enabled": False, "effort": "high"}
+    assert "output_config" not in routed and "thinking" not in routed
+    assert wire_level(routed) is None
+    assert last_skip(router, settings)["reconciled_effort"] is None
 
 
 def test_a_level_above_the_routes_family_cap_is_omitted_not_clamped(profile, tmp_path):
@@ -668,7 +699,9 @@ def test_a_level_above_the_routes_family_cap_is_omitted_not_clamped(profile, tmp
     routed = call(router, model=OPUS)["request"]
 
     assert routed["model"] == SONNET
-    assert routed["extra_body"]["reasoning"] == {"enabled": True}
+    # The omitted level leaves an empty ``output_config``, which is dropped rather than sent as {}.
+    assert "output_config" not in routed
+    assert wire_level(routed) is None
     skip = last_skip(router, settings)
     assert skip["reconciled_model"] == SONNET
     assert skip["reconciled_effort"] is None
@@ -702,8 +735,10 @@ def test_a_native_anthropic_turn_is_only_reported(profile, tmp_path, caplog):
     caplog.set_level(logging.WARNING)
     write_row(profile, JOB_SEARCH_MODEL_CONFIG)
     transport = StubTransport([])
-    router, settings = build(tmp_path, transport, config=_config("apply"))
-    request = subscription_request(model=SONNET, effort="high")
+    router, settings = build(
+        tmp_path, transport, config=_config("apply", routable_providers=["openai-codex"])
+    )
+    request = anthropic_request(model=SONNET, effort="high")
 
     assert call(router, request, provider=NATIVE) is None
 
@@ -711,7 +746,7 @@ def test_a_native_anthropic_turn_is_only_reported(profile, tmp_path, caplog):
     assert native["session_model"] == HAIKU
     assert native["session_provider"] == NATIVE
     assert native["session_effort"] == "medium"
-    assert native["mapped_provider"] == PROVIDER
+    assert native["mapped_provider"] == NATIVE
     assert native["action"] == "none"
     assert last_skip(router, settings)["reason"] == "provider_not_routed"
     assert "reconciled_model" not in last_skip(router, settings)
@@ -737,27 +772,20 @@ def test_a_surface_outside_the_platforms_list_never_reads_the_row(
     assert "reconciled_model" not in last_skip(router, settings)
 
 
-def test_a_native_selection_reconciles_on_the_native_route(profile, tmp_path):
-    """``provider_map`` is additive: the row's own route needs no translation to be eligible.
+def test_an_alias_selection_reconciles_on_the_native_route(profile, tmp_path):
+    """``provider_map`` is additive: identity, aliases included, needs no translation.
 
-    The owner's decision (card t_ec2453b1) routes the native ``anthropic`` route too, so a
-    selection naming ``anthropic`` must be usable on an ``anthropic`` request — reading the map as
-    "only valid in" turned it into ``selection_unmappable/provider_mismatch`` and left the turn on
-    the profile's default. The subscription translation still applies (``provider_map``), it just
-    no longer *restricts* the route the row itself names.
+    The owner's decision (card t_ec2453b1) routes the native ``anthropic`` route, so a selection
+    naming ``anthropic`` — or any alias of it — must be usable on an ``anthropic`` request. Reading
+    the map as "only valid in" turned it into ``selection_unmappable/provider_mismatch`` and left
+    the turn on the profile's default.
     """
-    write_row(profile, JOB_SEARCH_MODEL_CONFIG)
+    write_row(profile, {"model": HAIKU, "provider": "claude", "reasoning_config": {"enabled": True, "effort": "medium"}})
     transport = low_confidence_transport()
     config = _config("apply")
-    config["routable_providers"] = [NATIVE, PROVIDER]
     router, settings = build(tmp_path, transport, config=config)
 
-    result = call(
-        router,
-        subscription_request(model=SONNET, effort="high"),
-        provider=NATIVE,
-        api_mode="anthropic_messages",
-    )
+    result = call(router, anthropic_request(model=SONNET, effort="high"))
 
     assert result is not None
     assert result["request"]["model"] == HAIKU

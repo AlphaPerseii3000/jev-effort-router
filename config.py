@@ -30,7 +30,6 @@ from .grid import (
     DEFAULT_GRID,
     OPENCODE_CONSOLE_GRID,
     OPENCODE_GO_GRID,
-    SUBSCRIPTION_GRID,
     Entry,
     parse_grid,
     parse_grid_strict,
@@ -69,15 +68,6 @@ CODEX_PROVIDER_ALIASES = ("codex", "openai_codex")
 ANTHROPIC_PROVIDER = "anthropic"
 ANTHROPIC_PROVIDER_ALIASES = ("claude", "claude-code")
 
-#: The Claude subscription provider: Claude Pro/Max driven through the official Claude Code CLI.
-#: It is a **different** route from ``anthropic`` — different profile, different auth, and a
-#: ``chat_completions`` payload, where the level rides in ``extra_body.reasoning.effort`` instead of
-#: the Messages ``output_config``. The name is the provider's own plugin id and it has no aliases:
-#: an id that is not this one is not this route, and inventing an alias here would let a typo or an
-#: unrelated provider inherit a subscription's wire (see :data:`ROUTE_WIRE_STYLES`).
-CLAUDE_SUBSCRIPTION_PROVIDER = "claude-subscription-directsdk-experimental"
-CLAUDE_SUBSCRIPTION_PROVIDER_ALIASES: Tuple[str, ...] = ()
-
 #: Console serves generation for the one normal (non-free) id its public model list carries.
 #: The free variant was refused by the owner and is absent from every catalog.
 OPENCODE_CONSOLE_MODELS: Tuple[str, ...] = ("deepseek-v4.1-flash",)
@@ -108,22 +98,13 @@ CODEX_ALLOWLIST = frozenset(CODEX_MODELS)
 ANTHROPIC_MODELS: Tuple[str, ...] = tuple(entry.model_id for entry in ANTHROPIC_GRID)
 ANTHROPIC_ALLOWLIST = frozenset(ANTHROPIC_MODELS)
 
-#: The ``claude-subscription-directsdk-experimental`` route's catalog: the native ids its pinned
-#: ``model_catalog.py`` serves, taken from the route's own grid so the cap and the built-in catalog
-#: cannot drift apart.
-CLAUDE_SUBSCRIPTION_MODELS: Tuple[str, ...] = tuple(entry.model_id for entry in SUBSCRIPTION_GRID)
-CLAUDE_SUBSCRIPTION_ALLOWLIST = frozenset(CLAUDE_SUBSCRIPTION_MODELS)
-
 #: The model a route degrades to when the operator's ``default_model`` is not in its catalog.
 #: ``anthropic`` defaults to Sonnet — the middle family — instead of the first grid entry
 #: (Haiku), because a turn that loses its decision should keep a general-purpose model rather
-#: than the cheapest one. ``claude-subscription-directsdk-experimental`` defaults to Opus: its
-#: reason to exist is the planner/reviewer work, so a degraded turn keeps the planning family.
-#: Every other route keeps the first-catalog-entry behaviour.
+#: than the cheapest one. Every other route keeps the first-catalog-entry behaviour.
 ROUTE_DEFAULT_MODELS: Mapping[str, str] = MappingProxyType(
     {
         ANTHROPIC_PROVIDER: "claude-sonnet-5-5",
-        CLAUDE_SUBSCRIPTION_PROVIDER: "claude-opus-5-5",
     }
 )
 
@@ -137,21 +118,6 @@ _GRID_ALIASES: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
     (COMMANDCODE_PROVIDER, COMMANDCODE_PROVIDER_ALIASES),
     (CODEX_PROVIDER, CODEX_PROVIDER_ALIASES),
     (ANTHROPIC_PROVIDER, ANTHROPIC_PROVIDER_ALIASES),
-    (CLAUDE_SUBSCRIPTION_PROVIDER, CLAUDE_SUBSCRIPTION_PROVIDER_ALIASES),
-)
-
-#: Context-window variant suffixes a route's model ids may carry, declared per route.
-#:
-#: On ``claude-subscription-directsdk-experimental`` the caller asks for the 1M window by writing
-#: ``[1m]`` at the end of the id. The provider's own ``model_catalog.py::native_model`` strips the
-#: suffix and re-appends it to every family it pins at 1M, so ``X`` and ``X[1m]`` reach the CLI
-#: identically — the suffix is a statement of intent, not a different model. This plugin's grids
-#: carry the bare ids, so the suffix has to be normalised away before a grid, catalog, memo or
-#: selection comparison and put back on the wire. Nothing is declared for the native ``anthropic``
-#: route: its 1M window is requested by the ``context-1m-2025-08-07`` beta header, never by the id,
-#: and an unexpected ``[1m]`` there stays a ``model_not_in_grid`` skip.
-CONTEXT_VARIANT_SUFFIXES: Mapping[str, Tuple[str, ...]] = MappingProxyType(
-    {CLAUDE_SUBSCRIPTION_PROVIDER: ("[1m]",)}
 )
 
 #: API modes this router understands, keyed by the payload shape each one hands the middleware.
@@ -177,31 +143,18 @@ ROUTED_API_MODES = ("chat_completions", "codex_responses", "anthropic_messages")
 WIRE_STYLE_TOP_LEVEL = "top_level"
 WIRE_STYLE_RESPONSES = "responses"
 WIRE_STYLE_OUTPUT_CONFIG = "output_config"
-WIRE_STYLE_EXTRA_BODY_REASONING = "extra_body_reasoning"
 
-#: The style each payload shape implies when its route declares none. ``chat_completions`` takes
-#: the top-level ``reasoning_effort`` — the OpenAI-compatible contract every route of this plugin
-#: has used since 0.1.0.
+#: The style each payload shape implies. ``chat_completions`` takes the top-level
+#: ``reasoning_effort`` — the OpenAI-compatible contract every route of this plugin has used since
+#: 0.1.0. A route whose body puts the level somewhere its ``api_mode`` does not imply is not
+#: supported: the one that did carried it in a nested ``extra_body`` and was removed in 0.8.0, so
+#: this table is the whole mapping.
 API_MODE_WIRE_STYLES: Mapping[str, str] = MappingProxyType(
     {
         "chat_completions": WIRE_STYLE_TOP_LEVEL,
         "codex_responses": WIRE_STYLE_RESPONSES,
         "anthropic_messages": WIRE_STYLE_OUTPUT_CONFIG,
     }
-)
-
-#: Route-specific styles: a provider whose body takes the level somewhere its ``api_mode`` does not
-#: imply. One route is declared here today — ``claude-subscription-directsdk-experimental``, which
-#: speaks ``chat_completions`` but carries the level in ``extra_body.reasoning.effort``: its
-#: ``build_api_kwargs_extras`` returns ``{"reasoning": dict(reasoning_config)}``, and the core puts
-#: that into ``api_kwargs["extra_body"]["reasoning"]``
-#: (``core/agent/transports/chat_completions.py``). A top-level ``reasoning_effort`` must never be
-#: written on it: the provider's own kwarg allowlist rejects the field outright.
-#:
-#: A route absent from this table keeps its ``api_mode`` style, so declaring one here cannot change
-#: another route's payload.
-ROUTE_WIRE_STYLES: Mapping[str, str] = MappingProxyType(
-    {CLAUDE_SUBSCRIPTION_PROVIDER: WIRE_STYLE_EXTRA_BODY_REASONING}
 )
 
 #: -- Session selection reconciliation ------------------------------------------------------------
@@ -232,15 +185,12 @@ SESSION_SELECTION_MODES: Tuple[str, ...] = (
 DEFAULT_SESSION_SELECTION_PLATFORMS: Tuple[str, ...] = ("webui",)
 
 #: Selection provider → provider of the request it is reconciled onto ("also valid in"). A selection
-#: is always eligible on its **own** route (identity, see ``Router._eligible_selection``); this map
-#: only adds a second route the same choice may be applied to, and the case it exists for is the
-#: native ``anthropic`` pick on a request already going out on the subscription route — the build
-#: race ``session_selection`` patches over. What a turn *costs* is decided by the credential the
-#: core resolves for that route, never by the provider id: Claude Code's OAuth consumes the
-#: subscription quota, an ``sk-ant-api*`` key bills per token.
-DEFAULT_SESSION_SELECTION_PROVIDER_MAP: Mapping[str, str] = MappingProxyType(
-    {ANTHROPIC_PROVIDER: CLAUDE_SUBSCRIPTION_PROVIDER}
-)
+#: is always eligible on its **own** route (identity, see ``Router._eligible_selection``), so the
+#: default is empty: identity only. This map exists for an operator who wants a pick made on one
+#: provider to apply to a request already going out on another (an alias or a second route for the
+#: same catalog) — declaring one here is opt-in. What a turn *costs* is decided by the credential
+#: the core resolves for that route, never by the provider id.
+DEFAULT_SESSION_SELECTION_PROVIDER_MAP: Mapping[str, str] = MappingProxyType({})
 
 #: Providers that mean "the live agent is on the native Anthropic route". Consulted only **out of
 #: the race**: while the route is not in ``routable_providers`` the plugin has no lever there — the
@@ -418,28 +368,6 @@ def same_provider_route(first: str, second: str) -> bool:
     return other in group if group else key == other
 
 
-def context_variant_suffixes(provider: str) -> Tuple[str, ...]:
-    """The context-variant suffixes declared for ``provider``'s model ids (empty when none are)."""
-    key = (provider or "").strip().lower()
-    return CONTEXT_VARIANT_SUFFIXES.get(key) or CONTEXT_VARIANT_SUFFIXES.get(
-        canonical_provider_name(key) or "", ()
-    )
-
-
-def split_context_variant(provider: str, model_id: str) -> Tuple[str, str]:
-    """``(base_id, suffix)`` for ``model_id`` on ``provider``; ``(model_id, "")`` when not one.
-
-    Split, never dropped: every lookup (grid, catalog, memo, selection eligibility) needs the base
-    id, and the write path needs the suffix back, because the suffix is the caller's own statement
-    of a 1M turn and the route's implicit upgrade is not something this plugin should lean on.
-    """
-    text = (model_id or "").strip()
-    for suffix in context_variant_suffixes(provider):
-        if len(text) > len(suffix) and text.endswith(suffix):
-            return text[: -len(suffix)], suffix
-    return text, ""
-
-
 def route_allowlist(provider: str, decider: str = "") -> Optional[frozenset]:
     """The allowlist that pins ``provider``'s catalog, or ``None`` when it has none.
 
@@ -459,12 +387,6 @@ def route_allowlist(provider: str, decider: str = "") -> Optional[frozenset]:
         return CODEX_ALLOWLIST if (decider or "").strip().lower() == "jev_console" else None
     if key in (ANTHROPIC_PROVIDER, *ANTHROPIC_PROVIDER_ALIASES):
         return ANTHROPIC_ALLOWLIST if (decider or "").strip().lower() == "jev_console" else None
-    if key in (CLAUDE_SUBSCRIPTION_PROVIDER, *CLAUDE_SUBSCRIPTION_PROVIDER_ALIASES):
-        return (
-            CLAUDE_SUBSCRIPTION_ALLOWLIST
-            if (decider or "").strip().lower() == "jev_console"
-            else None
-        )
     return None
 
 
@@ -481,8 +403,6 @@ def route_catalog(provider: str) -> Optional[Tuple[Entry, ...]]:
         return CODEX_GRID
     if key in (ANTHROPIC_PROVIDER, *ANTHROPIC_PROVIDER_ALIASES):
         return ANTHROPIC_GRID
-    if key in (CLAUDE_SUBSCRIPTION_PROVIDER, *CLAUDE_SUBSCRIPTION_PROVIDER_ALIASES):
-        return SUBSCRIPTION_GRID
     return None
 
 
@@ -498,26 +418,14 @@ def route_default_model(provider: str) -> Optional[str]:
     )
 
 
-def wire_style(provider: str, api_mode: str = "") -> str:
-    """The payload branch :meth:`router.Router._apply` must use for this route.
+def wire_style(api_mode: str = "") -> str:
+    """The payload branch :meth:`router.Router._apply` must use for this request.
 
-    Declarative on purpose: the router is told *which container* the body carries instead of
-    branching on provider ids. Resolution order:
-
-    1. the route's own declaration (:data:`ROUTE_WIRE_STYLES`), by canonical name and then by any
-       known alias of it;
-    2. the style the ``api_mode`` implies (:data:`API_MODE_WIRE_STYLES`);
-    3. the top-level ``reasoning_effort`` — the OpenAI-compatible default of this plugin.
-
-    An empty or unknown provider and an empty ``api_mode`` fall to the top-level style, which is
-    exactly what the router did before styles existed.
+    Answered by the ``api_mode`` the route speaks (:data:`API_MODE_WIRE_STYLES`): the router is told
+    *which container* the body carries instead of branching on provider ids. An empty ``api_mode``
+    or an unknown one falls to the top-level ``reasoning_effort`` — the OpenAI-compatible default of
+    this plugin, which is what the router did before styles existed.
     """
-    key = (provider or "").strip().lower()
-    declared = ROUTE_WIRE_STYLES.get(key) or ROUTE_WIRE_STYLES.get(
-        canonical_provider_name(key) or ""
-    )
-    if declared:
-        return declared
     return API_MODE_WIRE_STYLES.get((api_mode or "").strip().lower(), WIRE_STYLE_TOP_LEVEL)
 
 
@@ -651,9 +559,9 @@ class SessionSelectionSettings:
       for the fail-open path, not a ceiling or a pin on the decider.
 
     ``platforms`` names the surfaces whose row is authoritative. A selection is always eligible on
-    its own route; ``provider_map`` adds a **second** route the same choice is also valid on (the
-    native ``anthropic`` pick against the subscription route), which is how the build race this
-    feature exists for is reconciled without forbidding the native route.
+    its own route; ``provider_map`` adds a **second** route the same choice is also valid on. It is
+    empty by default, which means identity only: the plugin never translates a pick onto a route
+    the row did not name unless an operator declares that translation.
     """
 
     mode: str = SESSION_SELECTION_OFF
@@ -1050,17 +958,17 @@ def _parse_session_platforms(raw: Any) -> Tuple[str, ...]:
 def _parse_session_provider_map(raw: Any) -> Mapping[str, str]:
     """``session_selection.provider_map``: selection provider → request provider.
 
-    Absent/null keeps the built-in translation. A declared map keeps only entries whose both
-    sides are non-empty strings, lower-cased; an explicitly empty declaration stays empty (that
-    is how an operator turns the translation off), while a value that is not a mapping at all
-    falls back to the built-in map with a warning.
+    Absent/null keeps the built-in map, which is empty (identity only). A declared map keeps only
+    entries whose both sides are non-empty strings, lower-cased; an explicitly empty declaration
+    stays empty, and a value that is not a mapping at all falls back to the built-in map with a
+    warning.
     """
     if raw is None:
         return DEFAULT_SESSION_SELECTION_PROVIDER_MAP
     if not isinstance(raw, Mapping):
         logger.warning(
             "jev-effort-router: session_selection.provider_map must be a mapping of "
-            "provider to provider; keeping the built-in translation"
+            "provider to provider; keeping the identity-only default"
         )
         return DEFAULT_SESSION_SELECTION_PROVIDER_MAP
     parsed: Dict[str, str] = {}

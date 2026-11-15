@@ -1022,7 +1022,13 @@ mas **não é uma captura ao vivo** e não deve ser descrito como tal.
   Rollback em `evidence/RESUMO.md`.
 
 
-## 12. Rota `claude-subscription-directsdk-experimental` — corpo reproduzido no parser do provider (`t_c5151092`)
+## 12. Rota `claude-subscription-directsdk-experimental` — corpo reproduzido no parser do provider (`t_c5151092`) — **HISTÓRICO**
+
+> **Histórico (não descreve o código atual).** A rota, o catálogo `SUBSCRIPTION_GRID`, as políticas
+> `SUBSCRIPTION_*`, o estilo de wire `extra_body_reasoning` e a variante de id `[1m]` foram **removidos
+> na 0.8.0** (card `t_1f6f98d1`): o plugin do provider saiu do host em 2026-11-15 e nenhum dos 9 perfis
+> o listava em `routable_providers`. A seção fica como registro da evidência da época; os símbolos que
+> ela cita não existem mais.
 
 Esta rota é **outro provider**, não a rota `anthropic` nativa da §11: Claude Pro/Max através do
 Claude Code CLI (`api_mode=chat_completions`), com o nível em **`extra_body.reasoning.effort`**.

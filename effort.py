@@ -219,15 +219,13 @@ def _canonical_provider(provider: str) -> str:
 #:
 #: Metadata for the operator, not a transport selector: ``reasoning`` for the Codex Responses route
 #: (the transport nests the level there), ``output_config.effort`` for the Anthropic Messages route,
-#: ``extra_body.reasoning.effort`` for the Claude subscription route, ``reasoning_effort`` (the
-#: default, see :func:`_custom_wire_parameter`) for every other custom contract. The router still
-#: picks the payload shape from ``config.wire_style``; nothing here can create a ``reasoning``
-#: object, an ``output_config`` one or an ``extra_body`` one.
+#: ``reasoning_effort`` (the default, see :func:`_custom_wire_parameter`) for every other custom
+#: contract. The router still picks the payload shape from ``config.wire_style``; nothing here can
+#: create a ``reasoning`` object or an ``output_config`` one.
 WIRE_PARAMETERS: Mapping[str, str] = MappingProxyType(
     {
         "openai-codex": "reasoning",
         "anthropic": "output_config.effort",
-        "claude-subscription-directsdk-experimental": "extra_body.reasoning.effort",
     }
 )
 
@@ -673,87 +671,6 @@ ANTHROPIC_REASONING_POLICIES: Dict[str, ModelReasoningPolicy] = {
 }
 
 
-#: ``(model id, accepted levels)`` for the ids the opt-in
-#: ``claude-subscription-directsdk-experimental`` route serves. Same three native ids as the Messages
-#: route (the provider's ``model_catalog.py`` pins them) and the same per-family caps, decided for
-#: the same reason: Opus and Sonnet stop at ``high`` because a ``max``/``xhigh`` turn there costs
-#: several times a ``high`` one and this deployment has no measured need for it, while Haiku — the
-#: high-volume family — keeps ``max``. ``default_effort`` still excludes ``max``, so a degraded turn
-#: is never the expensive one. An operator who wants ``max`` on Opus/Sonnet declares it in
-#: ``effort_maps``.
-SUBSCRIPTION_MODEL_LEVELS: Tuple[Tuple[str, Tuple[str, ...]], ...] = (
-    ("claude-opus-5-5", ("low", "medium", "high")),
-    ("claude-sonnet-5-5", ("low", "medium", "high")),
-    ("claude-haiku-5-5", ("low", "medium", "high", "max")),
-)
-
-#: Explicit reasoning policies for the ``claude-subscription-directsdk-experimental`` route
-#: (Claude Pro/Max through the official Claude Code CLI, ``api_mode=chat_completions``).
-#:
-#: ``wire_parameter`` names the field the level rides in. On this route that is **not** a top-level
-#: kwarg: the provider's ``build_api_kwargs_extras`` returns ``{"reasoning": dict(reasoning_config)}``
-#: (``claude-subscription-directsdk-experimental/__init__.py``) and the core puts that into
-#: ``api_kwargs["extra_body"]["reasoning"]``
-#: (``core/agent/transports/chat_completions.py``, the ``extra_body``/``api_kwargs_extras`` merge).
-#: The ``llm_request`` middleware runs after that build, so the body it receives already carries
-#: ``extra_body.reasoning`` and the level belongs at ``extra_body.reasoning.effort`` and nowhere
-#: else. A top-level ``reasoning_effort`` is refused by the provider itself: ``directsdk.py``
-#: validates the kwargs against an allowlist that does not contain it.
-#:
-#: Downstream, the provider's own parser turns that object into the native request
-#: (``directsdk.py``, ``Request.body``): it pops ``reasoning`` from ``extra_body``, refuses any key
-#: other than ``enabled``/``effort``, clamps the effort onto
-#: ``(none, low, medium, high, xhigh, max)``, sets ``thinking: {type: adaptive, display:
-#: summarized}`` for adaptive families when ``enabled`` is true, writes
-#: ``output_config: {effort: …}``, and — because Claude Code appends its own per-turn effort
-#: message — passes the same value to the CLI as ``--effort``. A disabled ``reasoning`` object is
-#: the provider's business, not this router's: the plugin leaves the effort exactly as the transport
-#: built it and records ``effort: null``, so the audit never claims a level this plugin chose.
-#:
-#: Contract evidence is a **reproduction, not a live capture**: the body was derived from
-#: ``build_api_kwargs_extras`` + this plugin's rewrite + the provider's ``Request.body`` parser, and
-#: ``docs/EVIDENCIAS_OPERACIONAIS.md`` §12 records the resulting ``output_config.effort`` per model
-#: with no top-level keys added.
-SUBSCRIPTION_REASONING_POLICIES: Dict[str, ModelReasoningPolicy] = {
-    model_id: ModelReasoningPolicy(
-        provider="claude-subscription-directsdk-experimental",
-        model_id=model_id,
-        wire_parameter="extra_body.reasoning.effort",
-        accepted_levels=levels,
-        evidence=(
-            "Declared by the provider profile for the Claude subscription route: "
-            "claude-subscription-directsdk-experimental/__init__.py::build_api_kwargs_extras "
-            "returns {'reasoning': dict(reasoning_config)}, which the core puts in "
-            "api_kwargs['extra_body']['reasoning'] "
-            "(core/agent/transports/chat_completions.py), and directsdk.py's request parser pops "
-            "that object, accepts only enabled/effort, clamps the effort onto "
-            "(none, low, medium, high, xhigh, max) and maps it to thinking + "
-            "output_config.effort, then passes the same value to Claude Code as --effort. A "
-            "top-level reasoning_effort is not in the provider's allowed kwargs, so the plugin "
-            "never writes it here. The body was reproduced from those three sources rather than "
-            "captured live (docs/EVIDENCIAS_OPERACIONAIS.md §12). The caps in this table are this "
-            "plugin's decision, not a wire limit: Opus/Sonnet high is the ceiling this deployment "
-            "pays for, Haiku keeps max."
-        ),
-        omitted=False,
-        decision=(
-            f"The level chosen by Jev is written as extra_body.reasoning.effort for {model_id}: "
-            "low/medium/high verbatim, plus max verbatim where this row declares it. Anything else "
-            "(minimal, ultra, an xhigh nobody declared, an unknown string) is omitted, never "
-            "invented and never clamped onto another rung — the operator's effort_maps is the "
-            "supported way to widen a family. The reasoning and extra_body objects are the "
-            "transport's: the plugin rewrites the effort inside a reasoning object that already "
-            "exists, never creates one, never creates extra_body, leaves reasoning.enabled and "
-            "every other extra_body key untouched, and leaves a reasoning object the transport "
-            "disabled (enabled: false) exactly as it was — the audit then reports effort: null "
-            "with effort_requested keeping Jev's choice."
-        ),
-        offered=levels,
-    )
-    for model_id, levels in SUBSCRIPTION_MODEL_LEVELS
-}
-
-
 def model_reasoning_policy(
     model_id: Optional[str],
     *,
@@ -883,26 +800,6 @@ def model_reasoning_policy(
             wire_parameter=None,
             accepted_levels=(),
             evidence="Model not in the anthropic catalog; unconfirmed reasoning support.",
-            omitted=True,
-            decision=f"Model {model_id} has no confirmed reasoning contract on {provider_key}; omitted on wire.",
-        )
-
-    # claude-subscription-directsdk-experimental built-in policy: bare native ids, chat_completions
-    # wire, level inside extra_body.reasoning. A different provider from ``anthropic``: same three
-    # families, different payload and different auth, so support is never inferred across them.
-    if provider_key == "claude-subscription-directsdk-experimental":
-        found, policy = select_model_spec(SUBSCRIPTION_REASONING_POLICIES, model_id)
-        if found:
-            return policy
-        return ModelReasoningPolicy(
-            provider=provider_key,
-            model_id=model_id or "",
-            wire_parameter=None,
-            accepted_levels=(),
-            evidence=(
-                "Model not in the claude-subscription-directsdk-experimental catalog; "
-                "unconfirmed reasoning support."
-            ),
             omitted=True,
             decision=f"Model {model_id} has no confirmed reasoning contract on {provider_key}; omitted on wire.",
         )

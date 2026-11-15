@@ -1,35 +1,24 @@
-"""The native ``anthropic`` route, and the subscription route's ``[1m]`` context variant.
+"""The native ``anthropic`` route.
 
-Two decisions from card t_ec2453b1 (spec §2, §3, §5) are pinned here, and nothing else:
+The decision from card t_ec2453b1 (spec §2, §3, §5) is pinned here:
 
-* the router routes **both** Claude routes. The native ``anthropic`` route is a normal routable
-  provider now (its turns are billed against whatever credential the core resolved — Claude Code's
-  OAuth on this host, a per-token API key elsewhere, which is the credential's business, not this
-  plugin's), and the webui selection naming ``anthropic`` is eligible on a native request because
-  identity needs no translation. ``provider_map`` stays as the *additional* route a selection is
-  also valid on, which is what keeps the t_9bda5849 race reconciled on the subscription route.
-* the subscription route's ``[1m]`` suffix is a context-window variant, not another model. It is
-  normalised away for every grid/catalog/memo/selection comparison and re-appended on the wire.
-  The native route has **no** variant: its 1M window comes from the beta header, so an unexpected
-  ``[1m]`` there stays a ``model_not_in_grid`` skip (M3).
+* the router routes the native ``anthropic`` route like any other routable provider. Its turns are
+  billed against whatever credential the core resolved — Claude Code's OAuth on this host, a
+  per-token API key elsewhere, which is the credential's business, not this plugin's.
+* the webui selection naming ``anthropic`` is eligible on a native request because identity needs
+  no translation, and ``session_selection.provider_map`` (empty by default since 0.8.0) only *adds*
+  a route a choice is also valid on.
 
 Test IDs, as numbered by the spec (see ``docs/routing-grid.md``):
 
 ===================  ==============================================================
 N1..N5               native route: routed decision, family effort cap, reconciliation,
                      and the regression that keeps an unrouted native turn untouched
-M1..M4               ``[1m]`` on the subscription route: wire, selection, native
-                     (no normalisation) and the memo replay
-B1, B2               both routes in one session, and the t_9bda5849 race
 F1..F3               fail-open, Hermes fallback, and ``mode: off``
 ===================  ==============================================================
 """
 
 from __future__ import annotations
-
-import importlib.util
-import os
-from pathlib import Path
 
 import pytest
 from stubs import (
@@ -38,7 +27,6 @@ from stubs import (
     StubTransport,
     anthropic_request,
     decision_payload,
-    subscription_request,
 )
 from test_router import build, route
 from test_session_selection import write_row
@@ -47,20 +35,14 @@ import selection
 from config import (
     ANTHROPIC_MODELS,
     COMMANDCODE_MODELS,
-    CONTEXT_VARIANT_SUFFIXES,
     same_provider_route,
-    split_context_variant,
 )
-from effort import SUBSCRIPTION_MODEL_LEVELS
-from grid import SUBSCRIPTION_GRID
 
-PROVIDER = "claude-subscription-directsdk-experimental"
 NATIVE = "anthropic"
 COMMANDCODE = "commandcode"
 HAIKU = "claude-haiku-5-5"
 SONNET = "claude-sonnet-5-5"
 OPUS = "claude-opus-5-5"
-ONE_M = "[1m]"
 
 SESSION_ID = "20261111_233528_179895"
 
@@ -102,18 +84,6 @@ def native_call(router, request=None, *, model=HAIKU, **overrides):
     return route(router, request, **kwargs)
 
 
-def subscription_call(router, request=None, *, model=SONNET, **overrides):
-    kwargs = dict(
-        model=model,
-        provider=PROVIDER,
-        base_url="https://subscription.invalid",
-        api_mode="chat_completions",
-    )
-    kwargs.update(overrides)
-    request = request if request is not None else subscription_request(model=model)
-    return route(router, request, **kwargs)
-
-
 def records(router, settings, limit=50):
     return router.tail(settings, limit=limit)
 
@@ -126,10 +96,6 @@ def last_skip(router, settings):
     skips = events(router, settings, "skip")
     assert skips, "expected a skip record"
     return skips[-1]
-
-
-def subscription_effort(routed):
-    return (routed.get("extra_body") or {}).get("reasoning", {}).get("effort")
 
 
 # -- N1..N3: the native route's wiring -----------------------------------------
@@ -206,7 +172,7 @@ def test_n4_a_webui_selection_reconciles_a_failed_native_turn(profile, tmp_path)
     router, settings = build(
         tmp_path,
         StubTransport([StubResponse(decision_payload("2", 0.10, "high", 0.12, grid_size=3))] * 2),
-        config=config(NATIVE, PROVIDER, mode="apply"),
+        config=config(NATIVE, mode="apply"),
     )
 
     result = native_call(
@@ -232,10 +198,10 @@ def test_n5_native_stays_untouched_while_the_route_is_not_routable(profile, tmp_
     """N5 — regression: without ``anthropic`` in ``routable_providers`` nothing changes.
 
     The record is asserted field by field, because "byte for byte" is the whole promise of the
-    rollback: ``provider_not_routed``, no decider call, and no ``normalized_model`` beside the
-    configured id.
+    rollback: ``provider_not_routed``, no decider call, and exactly the fields a deployment without
+    the native route wrote.
     """
-    router, settings = build(tmp_path, StubTransport([]), config=config(PROVIDER))
+    router, settings = build(tmp_path, StubTransport([]), config=config(COMMANDCODE))
     request = anthropic_request(model=HAIKU, effort="medium")
 
     assert native_call(router, request, model=HAIKU) is None
@@ -252,187 +218,6 @@ def test_n5_native_stays_untouched_while_the_route_is_not_routable(profile, tmp_
         "api_request_id": "turn-1:api:0",
         "platform": "cli",
     }
-
-
-# -- M1..M4: the subscription route's ``[1m]`` ----------------------------------
-
-
-def test_m1_the_suffix_is_normalised_for_the_grid_and_put_back_on_the_wire(profile, tmp_path):
-    """M1 — configured ``Sonnet[1m]``, decided Haiku: the wire carries ``Haiku[1m]``."""
-    transport = StubTransport(
-        [StubResponse(decision_payload("1", 0.95, "high", 0.9, grid_size=3))]
-    )
-    router, settings = build(tmp_path, transport, config=config(PROVIDER))
-    configured = SONNET + ONE_M
-
-    result = subscription_call(router, subscription_request(model=configured, effort="low"), model=configured)
-
-    assert result is not None, "a ``[1m]`` request must not be a model_not_in_grid skip"
-    routed = result["request"]
-    assert routed["model"] == HAIKU + ONE_M
-    assert subscription_effort(routed) == "high"
-
-    record = router.tail(settings, limit=1)[0]
-    assert record["event"] == "route"
-    assert record["model"] == HAIKU
-    assert record["wire_model"] == HAIKU + ONE_M
-    assert record["provider"] == PROVIDER
-    # The configured id is kept verbatim; the bare id every lookup used is beside it.
-    assert record["configured_model"] == configured
-    assert record["normalized_model"] == SONNET
-    assert events(router, settings, "skip") == []
-
-
-def test_m1_the_subscription_providers_native_model_accepts_that_wire_id():
-    """M1 — contract check against the provider's own ``model_catalog.native_model``.
-
-    The wire id this plugin writes has to be one the provider accepts and resolves back to itself:
-    ``native_model`` strips ``[1m]``, routes the short names and re-appends the suffix to every
-    family it pins at 1M. Skipped only when the provider plugin is not installed on this machine —
-    the rest of M1 does not depend on it.
-    """
-    module = _subscription_model_catalog()
-    for entry in SUBSCRIPTION_GRID:
-        # The provider pins these three families at 1M (``model_catalog.CONTEXT_WINDOWS``); an id
-        # outside that table would reach the CLI unchanged and the suffix would not be its own.
-        assert module.CONTEXT_WINDOWS[entry.model_id] == 1_000_000
-        wire = entry.model_id + ONE_M
-        assert module.native_model(wire) == wire
-
-
-def test_m2_a_suffixed_selection_is_eligible_on_the_subscription_route(profile, tmp_path):
-    """M2 — the row's ``Sonnet[1m]`` is the grid's ``Sonnet``: not ``model_outside_catalog``."""
-    write_row(
-        profile,
-        selection_row(SONNET + ONE_M, PROVIDER, "medium"),
-        session_id=SESSION_ID,
-    )
-    router, settings = build(
-        tmp_path,
-        StubTransport([StubResponse(decision_payload("2", 0.10, "high", 0.12, grid_size=3))] * 2),
-        config=config(PROVIDER, mode="apply"),
-    )
-
-    result = subscription_call(
-        router,
-        subscription_request(model=SONNET, effort="high"),
-        platform="webui",
-        session_id=SESSION_ID,
-        turn_id="m2",
-    )
-
-    assert result is not None
-    assert result["request"]["model"] == SONNET + ONE_M
-    assert events(router, settings, "selection_unmappable") == []
-    skip = last_skip(router, settings)
-    assert skip["reconciled_model"] == SONNET + ONE_M
-    assert skip["selection_source"] == "session_row"
-
-
-def test_m3_the_native_route_does_not_normalise_the_suffix(profile, tmp_path):
-    """M3 — the native 1M window is the beta header's: ``[1m]`` there is still an off-grid id."""
-    router, settings = build(tmp_path, StubTransport([]), config=config(NATIVE))
-
-    assert native_call(router, anthropic_request(model=SONNET + ONE_M), model=SONNET + ONE_M) is None
-
-    record = last_skip(router, settings)
-    assert record["reason"] == "model_not_in_grid"
-    assert record["configured_model"] == SONNET + ONE_M
-    # No suffix is declared for this route, so there is nothing to normalise and nothing to claim.
-    assert "normalized_model" not in record
-
-
-def test_m4_a_suffixed_turn_replays_its_own_memo(profile, tmp_path):
-    """M4 — a ``[1m]`` request replays the turn's decision instead of skipping on provenance."""
-    transport = StubTransport(
-        [StubResponse(decision_payload("2", 0.95, "high", 0.9, grid_size=3))]
-    )
-    router, settings = build(tmp_path, transport, config=config(PROVIDER))
-    configured = SONNET + ONE_M
-
-    first = subscription_call(
-        router,
-        subscription_request(model=configured, effort="high"),
-        model=configured,
-        turn_id="m4",
-    )
-    second = subscription_call(
-        router,
-        subscription_request(model=configured, effort="high"),
-        model=configured,
-        turn_id="m4",
-    )
-
-    assert first["request"]["model"] == SONNET + ONE_M
-    assert second["request"]["model"] == SONNET + ONE_M
-    assert transport.call_count == 1, "the second request must replay, not re-decide"
-    route_records = events(router, settings, "route")
-    assert [record["replayed"] for record in route_records] == [False, True]
-    assert events(router, settings, "skip") == []
-
-
-# -- B1/B2: both routes in one session, and the t_9bda5849 race -----------------
-
-
-def test_b1_both_routes_are_routed_in_one_session(profile, tmp_path):
-    """B1 — turn 1 subscription ``Sonnet[1m]``, turn 2 native Haiku: both routed, no leak."""
-    transport = StubTransport(
-        [
-            StubResponse(decision_payload("2", 0.95, "high", 0.9, grid_size=3)),
-            StubResponse(decision_payload("1", 0.95, "medium", 0.9, grid_size=3)),
-        ]
-    )
-    router, settings = build(tmp_path, transport, config=config(NATIVE, PROVIDER))
-    configured = SONNET + ONE_M
-
-    first = subscription_call(
-        router,
-        subscription_request(model=configured, effort="high"),
-        model=configured,
-        session_id=SESSION_ID,
-        turn_id="b1-sub",
-    )
-    second = native_call(
-        router,
-        anthropic_request(model=HAIKU, effort="medium"),
-        session_id=SESSION_ID,
-        turn_id="b1-native",
-    )
-
-    assert first["request"]["model"] == SONNET + ONE_M
-    assert second["request"]["model"] == HAIKU
-    assert "extra_body" not in second["request"] or "reasoning" not in second["request"]["extra_body"]
-    route_records = events(router, settings, "route")
-    assert [record["provider"] for record in route_records] == [PROVIDER, NATIVE]
-    # The native turn asked the decider itself: the subscription memo did not leak into it.
-    assert [record["replayed"] for record in route_records] == [False, False]
-    assert transport.call_count == 2
-
-
-def test_b2_the_race_still_reconciles_on_the_subscription_route(profile, tmp_path):
-    """B2 — t_9bda5849: the row says ``anthropic``, the request is on the subscription route."""
-    write_row(profile, selection_row(HAIKU, NATIVE, "medium"), session_id=SESSION_ID)
-    router, settings = build(
-        tmp_path,
-        StubTransport([StubResponse(decision_payload("2", 0.10, "high", 0.12, grid_size=3))] * 2),
-        config=config(NATIVE, PROVIDER, mode="apply"),
-    )
-
-    result = subscription_call(
-        router,
-        subscription_request(model=SONNET, effort="high"),
-        platform="webui",
-        session_id=SESSION_ID,
-        turn_id="b2",
-    )
-
-    assert result is not None
-    assert result["request"]["model"] == HAIKU
-    assert subscription_effort(result["request"]) == "medium"
-    assert events(router, settings, "selection_unmappable") == []
-    skip = last_skip(router, settings)
-    assert skip["provider"] == PROVIDER
-    assert skip["reconciled_model"] == HAIKU
 
 
 # -- F1..F3: fail-open, Hermes fallback, and ``mode: off`` ---------------------
@@ -562,52 +347,11 @@ def test_f3_mode_off_is_byte_for_byte_the_behaviour_without_the_key(profile, tmp
     assert events(off_router, off_settings, "selection_unmappable") == []
 
 
-# -- shared contracts ----------------------------------------------------------
-
-
-def test_the_variant_table_is_declared_only_where_the_id_carries_the_window():
-    """``[1m]`` is declared for the subscription route and for nothing else."""
-    assert CONTEXT_VARIANT_SUFFIXES == {PROVIDER: (ONE_M,)}
-    assert split_context_variant(PROVIDER, SONNET + ONE_M) == (SONNET, ONE_M)
-    assert split_context_variant(PROVIDER, SONNET) == (SONNET, "")
-    # The native route's 1M window rides in the beta header, so its id is never split.
-    assert split_context_variant(NATIVE, SONNET + ONE_M) == (SONNET + ONE_M, "")
-    # A suffix is only split when something is left of it.
-    assert split_context_variant(PROVIDER, ONE_M) == (ONE_M, "")
-
-
 def test_identity_is_the_routes_own_alias_table():
     """``same_provider_route`` is the alias normalisation, not a string comparison."""
     assert same_provider_route("anthropic", "claude")
     assert same_provider_route("claude-code", "anthropic")
-    assert not same_provider_route(NATIVE, PROVIDER)
+    assert not same_provider_route(NATIVE, COMMANDCODE)
     assert not same_provider_route("some-route", "another-route")
     assert same_provider_route("some-route", "some-route")
 
-
-def test_the_subscription_families_keep_their_declared_caps():
-    """The variant does not move a family's cap: Sonnet stops at ``high``, Haiku keeps ``max``."""
-    caps = dict(SUBSCRIPTION_MODEL_LEVELS)
-    assert caps[SONNET] == ("low", "medium", "high")
-    assert "max" in caps[HAIKU]
-
-
-def _subscription_model_catalog():
-    """The provider's own ``model_catalog`` module, or a skip when it is not installed here."""
-    candidates = []
-    if os.environ.get("JEV_SUBSCRIPTION_PLUGIN_DIR"):
-        candidates.append(Path(os.environ["JEV_SUBSCRIPTION_PLUGIN_DIR"]))
-    candidates.extend(
-        [
-            Path.home() / ".hermes" / "plugins" / PROVIDER,
-            Path.home() / "hermes" / "home" / "plugins" / PROVIDER,
-        ]
-    )
-    for directory in candidates:
-        path = directory / "model_catalog.py"
-        if path.is_file():
-            spec = importlib.util.spec_from_file_location("jev_subscription_model_catalog", path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            return module
-    pytest.skip("the claude-subscription provider plugin is not installed on this machine")
