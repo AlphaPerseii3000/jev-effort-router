@@ -100,11 +100,11 @@ def test_the_route_is_opt_in_and_the_cap_only_applies_under_the_console_decider(
     assert route_allowlist("claude", decider="jev_console") == ANTHROPIC_ALLOWLIST
 
     console = _settings(ANTHROPIC_CONFIG)
-    grid = console.effective(None, provider="anthropic").grid
+    grid = console.effective(provider="anthropic").grid
     assert [entry.model_id for entry in grid] == [HAIKU, SONNET, OPUS]
     # Sonnet is the route's default model, not the first entry (Haiku).
-    assert console.effective(None, provider="anthropic").default_model == SONNET
-    assert console.effective(None, provider="claude").default_model == SONNET
+    assert console.effective(provider="anthropic").default_model == SONNET
+    assert console.effective(provider="claude").default_model == SONNET
 
 
 def test_an_operator_grid_outside_the_catalog_is_capped_back_to_the_route_catalog():

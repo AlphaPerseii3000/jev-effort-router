@@ -1,7 +1,6 @@
-"""The ``platform_overrides`` settings side: parse, resolve, and the compatibility backstops.
+"""The ``Settings`` side: the route grids, the vocabulary, and the compatibility backstops.
 
-Every row of the ticket's I/O matrix that is about settings lands here. The router-side rows
-(a disabled surface skips, an unlisted surface still routes) live in ``tests/test_router.py``.
+Every row of the ticket's I/O matrix that is about settings lands here.
 """
 
 from __future__ import annotations
@@ -17,8 +16,6 @@ from config import (
     DEFAULT_CONSOLE_JEV_MODEL,
     DEFAULT_CONSOLE_KEY_ENV,
     DEFAULT_MODEL,
-    EFFORT_LEVELS,
-    PlatformPolicy,
     Settings,
     load_settings,
 )
@@ -29,180 +26,57 @@ def settings_for(config):
     return load_settings(lambda key, default=None: config.get(key, default))
 
 
-# -- happy path --------------------------------------------------------------------
+# -- the removed knobs ---------------------------------------------------------------
 
 
-def test_a_cron_policy_reads_all_four_keys_and_resolves_once():
-    settings = settings_for(
-        {
-            "platform_overrides": {
-                "cron": {
-                    "enabled": True,
-                    "grid": "glm-5.3: rigorous reasoning",
-                    "confidence_threshold": 0.7,
-                    "max_effort": "medium",
-                }
-            }
-        }
-    )
-
-    policy = settings.policy_for("cron")
-
-    assert policy is not None
-    assert policy.enabled is True
-    assert policy.grid == (Entry("glm-5.3", "rigorous reasoning"),)
-    assert policy.confidence_threshold == 0.7
-    assert policy.max_effort == "medium"
-
-    effective = settings.effective(policy)
-    assert effective.grid == (Entry("glm-5.3", "rigorous reasoning"),)
-    assert effective.confidence_threshold == 0.7
-    assert effective.max_effort == "medium"
-    # A policy that carried a parsed grid is a policy grid.
-    assert effective.grid_from_policy is True
-    # The rest of the snapshot is the global setting unchanged.
-    assert effective.default_model == settings.default_model
-    assert effective.default_effort == settings.default_effort
+REMOVED_KNOBS = {
+    "confidence_threshold_per_decider": {"jev": 0.9, "openai_compatible": 0.8},
+    "effort_criteria": {"high": "our own high-effort text"},
+    "effort_instructions": "our own routing rule",
+    "platform_overrides": {"cron": {"enabled": False, "max_effort": "low"}},
+}
 
 
-def test_a_policy_field_may_inherit_and_the_policy_key_is_normalised():
-    settings = settings_for({"platform_overrides": {"cron": {"enabled": True}}})
+def test_a_legacy_config_still_carrying_the_removed_knobs_is_ignored_without_raising():
+    """0.8.0 removed four knobs; an old ``config.yaml`` must keep loading, not explode.
 
-    assert settings.policy_for("CRON") is not None
-    policy = settings.policy_for("cron")
-    assert policy.enabled is True
-    assert policy.grid is None
-    assert policy.confidence_threshold is None
-    assert policy.max_effort is None
+    The plugin reads through ``ctx.get_config``, which answers with the caller's default for a key
+    nobody declares — so an unknown key is inert by construction. This pins that: the four removed
+    knobs change nothing, and the snapshot is still the default one.
+    """
+    legacy = settings_for(dict(REMOVED_KNOBS))
 
-    effective = settings.effective(policy)
-    assert effective.grid == settings.grid
-    assert effective.confidence_threshold == settings.confidence_threshold
-    assert effective.max_effort is None
-    # No policy grid was declared, so this is the global grid, not a policy grid.
-    assert effective.grid_from_policy is False
+    assert legacy == Settings()
+    for name in REMOVED_KNOBS:
+        assert not hasattr(legacy, name)
+    # The keys around them are still read, so the inertness is about these four only.
+    assert settings_for({**REMOVED_KNOBS, "timeout_s": 4.5}).timeout_s == 4.5
 
 
-# -- unlisted / absent / null / unusable -------------------------------------------
+# -- absent keys leave the defaults ---------------------------------------------------
 
 
-def test_unlisted_platform_has_no_policy():
-    settings = settings_for({"platform_overrides": {"cron": {"enabled": True}}})
+def test_absent_keys_leave_settings_default():
+    settings = settings_for({})
 
-    assert settings.policy_for("telegram") is None
-    assert settings.effective(None).grid == settings.grid
-    assert settings.effective(None).grid_from_policy is False
-
-
-@pytest.mark.parametrize(
-    "config",
-    [
-        {},  # no key
-        {"platform_overrides": None},  # null
-        {"platform_overrides": []},  # not a map
-        {"platform_overrides": {"cron": "off"}},  # value is not a map
-        {"platform_overrides": {"cron": {}}},  # map with no recognised key
-        {"platform_overrides": {"cron": {"nope": 1}}},  # map with only unknown keys
-        {"platform_overrides": {"cron": {"enabled": "banana"}}},  # uncoercible
-        {"platform_overrides": {"cron": {"grid": "???"}}},  # grid alone, unparseable
-        {"platform_overrides": {"cron": {"grid": 123}}},  # grid alone, unparseable
-        {"platform_overrides": {"cron": {"grid": []}}},  # grid alone, empty
-    ],
-)
-def test_absent_null_unlisted_and_unusable_leave_settings_default(config):
-    settings = settings_for(config)
-
-    assert settings.platform_overrides == {}
     # Field for field equal to a default-constructed Settings.
     assert settings == Settings()
     for field in dataclasses.fields(Settings):
         assert getattr(settings, field.name) == getattr(Settings(), field.name)
 
 
-def test_an_unusable_policy_grid_falls_to_the_global_grid_not_the_builtin():
-    custom = "custom-model: does the custom thing"
-    settings = settings_for(
-        {
-            "grid": custom,
-            "platform_overrides": {"cron": {"grid": "???"}},
-        }
-    )
+def test_an_unparseable_grid_keeps_the_operator_grid():
+    settings = settings_for({"grid": "custom-model: does the custom thing"})
 
     assert settings.grid == (Entry("custom-model", "does the custom thing"),)
-    # The entry was dropped, so no policy and the effective grid is the operator's own.
-    assert settings.policy_for("cron") is None
-    assert settings.effective(None).grid == settings.grid
-    assert settings.effective(None).grid != DEFAULT_GRID
+    assert settings.grid != DEFAULT_GRID
 
 
-# -- an unparseable policy grid alongside a readable key ---------------------------
-
-
-@pytest.mark.parametrize("bad_grid", [123, [], "", None, "   "])
-def test_unparseable_policy_grid_keeps_the_other_keys_and_drops_only_the_grid(bad_grid):
-    settings = settings_for(
-        {
-            "grid": "custom-model: does the custom thing",
-            "platform_overrides": {
-                "cron": {"enabled": True, "grid": bad_grid, "confidence_threshold": 0.8}
-            },
-        }
-    )
-
-    policy = settings.policy_for("cron")
-    assert policy is not None
-    assert policy.enabled is True
-    assert policy.confidence_threshold == 0.8
-    assert policy.grid is None
-
-    effective = settings.effective(policy)
-    # The grid falls to the *global* grid, never to parse_grid's built-in six.
-    assert effective.grid == settings.grid
-    assert effective.grid != DEFAULT_GRID
-    # A policy whose grid alone was unparseable is not a policy grid.
-    assert effective.grid_from_policy is False
-
-
-# -- vocabulary --------------------------------------------------------------------
-
-
-def test_max_effort_is_the_effort_vocabulary_and_rejects_anything_else():
-    for level in EFFORT_LEVELS:
-        settings = settings_for({"platform_overrides": {"cron": {"max_effort": level}}})
-        assert settings.policy_for("cron").max_effort == level
-
-    settings = settings_for({"platform_overrides": {"cron": {"max_effort": "xhigh"}}})
-    assert settings.policy_for("cron") is None
-
-
-def test_confidence_threshold_rejects_a_negative():
-    settings = settings_for({"platform_overrides": {"cron": {"confidence_threshold": -0.1}}})
-
-    assert settings.policy_for("cron") is None
-
-
-def test_platform_policy_is_frozen_and_keeps_none_distinct_from_false():
-    policy = PlatformPolicy(enabled=False)
-    assert policy.enabled is False
-
-    with pytest.raises(dataclasses.FrozenInstanceError):
-        policy.enabled = True  # type: ignore[misc]
-
-
-def test_the_settings_snapshot_cannot_be_mutated_through_its_mapping():
-    settings = settings_for({"platform_overrides": {"cron": {"enabled": True}}})
-    assert settings.policy_for("cron") is not None
-
-    with pytest.raises(TypeError):
-        settings.platform_overrides["cli"] = PlatformPolicy(enabled=False)  # type: ignore[index]
-
-    # The empty default is immutable too.
-    with pytest.raises(TypeError):
-        Settings().platform_overrides["cli"] = None  # type: ignore[index]
+# -- the frozen snapshot --------------------------------------------------------------
 
 
 def test_the_settings_snapshot_stays_hashable():
-    settings = settings_for({"platform_overrides": {"cron": {"enabled": True}}})
+    settings = settings_for({"effort_maps": {"opencode-go": {"kimi-k3": ["low", "high"]}}})
 
     assert hash(settings) == hash(settings)
     assert hash(Settings()) == hash(Settings())
@@ -257,7 +131,6 @@ def test_defaults_are_unchanged_when_the_key_is_absent():
     assert settings.routable_providers == ("ollama-cloud",)
     assert len(settings.grids) == 0
     assert len(settings.effort_maps) == 0
-    assert len(settings.confidence_threshold_per_decider) == 0
     assert settings.is_provider_routable("ollama-cloud") is True
     assert settings.is_provider_routable("opencode-go") is False
 
@@ -269,7 +142,6 @@ def test_new_config_options_parsed_and_queried():
         "decider_model": "deepseek-v4.1-flash",
         "decider_api_key_env": "OPENCODE_GO_API_KEY",
         "routable_providers": ["ollama-cloud", "opencode-go"],
-        "confidence_threshold_per_decider": {"openai_compatible": 0.8, "jev": 0.5},
     }
     settings = settings_for(config)
 
@@ -283,8 +155,6 @@ def test_new_config_options_parsed_and_queried():
     assert settings.is_provider_routable("openrouter") is False
     assert settings.api_key_env_for("openai_compatible") == "OPENCODE_GO_API_KEY"
     assert settings.api_key_env_for("jev") == "OPENROUTER_API_KEY"
-    assert settings.confidence_threshold_for("openai_compatible") == 0.8
-    assert settings.confidence_threshold_for("jev") == 0.5
 
 
 def test_console_config_options_parsed_and_queried():
@@ -322,7 +192,7 @@ def test_opencode_go_grid_is_the_single_model_catalog_under_the_console_decider(
     settings = settings_for({"decider": "jev_console"})
     for provider in ("opencode-go", "opencode_go"):
         assert [e.model_id for e in settings.grid_for(provider)] == ["deepseek-v4.1-flash"]
-        effective = settings.effective(None, provider=provider)
+        effective = settings.effective(provider=provider)
         assert [e.model_id for e in effective.grid] == ["deepseek-v4.1-flash"]
         # No legacy Ollama model can leak into the opt-in Go route.
         assert "kimi-k3" not in [e.model_id for e in effective.grid]
@@ -348,18 +218,6 @@ def test_opencode_go_grid_cap_applies_to_operator_grids_without_widening_them():
     )
     assert [e.model_id for e in only_outsiders.grid_for("opencode-go")] == ["deepseek-v4.1-flash"]
 
-    # A surface policy grid cannot widen the catalog either.
-    policy_settings = settings_for(
-        {
-            "decider": "jev_console",
-            "platform_overrides": {
-                "cli": {"grid": ["deepseek-v4.1-flash: a", "glm-5-free: b"]},
-            },
-        }
-    )
-    policy = policy_settings.effective(policy_settings.policy_for("cli"), provider="opencode-go")
-    assert [e.model_id for e in policy.grid] == ["deepseek-v4.1-flash"]
-
 
 def test_opencode_go_grid_untouched_for_legacy_deciders():
     settings = settings_for(
@@ -382,7 +240,7 @@ def test_commandcode_grid_is_the_single_namespaced_catalog_under_the_console_dec
         assert [e.model_id for e in settings.grid_for(provider)] == [
             "deepseek/deepseek-v4.1-flash"
         ]
-        effective = settings.effective(None, provider=provider)
+        effective = settings.effective(provider=provider)
         assert [e.model_id for e in effective.grid] == ["deepseek/deepseek-v4.1-flash"]
         assert effective.default_model == "deepseek/deepseek-v4.1-flash"
         # The bare OpenCode id is a different contract and cannot enter this route.
@@ -415,20 +273,6 @@ def test_commandcode_grid_cap_applies_to_operator_grids_without_widening_them():
         "deepseek/deepseek-v4.1-flash"
     ]
 
-    # A surface policy grid cannot widen the catalog either.
-    policy_settings = settings_for(
-        {
-            "decider": "jev_console",
-            "platform_overrides": {
-                "cli": {"grid": ["deepseek/deepseek-v4.1-flash: a", "kimi-k3: b"]},
-            },
-        }
-    )
-    policy = policy_settings.effective(
-        policy_settings.policy_for("cli"), provider="commandcode"
-    )
-    assert [e.model_id for e in policy.grid] == ["deepseek/deepseek-v4.1-flash"]
-
 
 def test_commandcode_grid_untouched_for_legacy_deciders():
     settings = settings_for(
@@ -460,7 +304,7 @@ def test_codex_grid_is_the_three_model_catalog_under_the_console_decider():
             "gpt-6-luna-900k",
             "gpt-6.1-sol",
         ]
-        effective = settings.effective(None, provider=provider)
+        effective = settings.effective(provider=provider)
         assert [e.model_id for e in effective.grid] == [
             "gpt-6-luna",
             "gpt-6-luna-900k",

@@ -438,7 +438,7 @@ def _run_decider(case):
     client = JevClient(settings, transport=transport)
     decision, reason = client.decide(
         MESSAGES,
-        settings.effective(None, provider=case["provider"]),
+        settings.effective(provider=case["provider"]),
         provider=case["provider"],
     )
     return {

@@ -82,7 +82,7 @@ def make(transport, config):
 def ask(client, settings):
     return client.decide(
         MESSAGES,
-        settings.effective(None, provider=PROVIDER),
+        settings.effective(provider=PROVIDER),
         provider=PROVIDER,
     )
 
@@ -188,7 +188,7 @@ def test_the_fallback_payload_is_the_systemone_payload_with_only_the_model_chang
 
     assert ask(client, settings)[0] is not None
 
-    effective = settings.effective(None, provider=PROVIDER)
+    effective = settings.effective(provider=PROVIDER)
     expected = build_payload(
         MESSAGES,
         effective.grid,

@@ -36,7 +36,7 @@ def test_payload_matches_the_documented_shape(monkeypatch):
     transport = StubTransport([StubResponse(decision_payload())])
     client, settings = make(transport)
 
-    client.decide(MESSAGES, settings.effective(None), platform="cli", provider="ollama-cloud")
+    client.decide(MESSAGES, settings.effective(), platform="cli", provider="ollama-cloud")
 
     payload = transport.last_payload
     assert payload["model"] == settings.jev_model == "typesafe/jev-1.13"
@@ -70,7 +70,7 @@ def test_default_jev_payload_is_frozen(monkeypatch):
     transport = StubTransport([StubResponse(decision_payload())])
     client, settings = make(transport)
 
-    client.decide(MESSAGES, settings.effective(None), platform="cli", provider="ollama-cloud")
+    client.decide(MESSAGES, settings.effective(), platform="cli", provider="ollama-cloud")
 
     canonical = json.dumps(
         transport.last_payload,
@@ -93,7 +93,7 @@ def test_payload_is_stated_in_one_language(monkeypatch):
     transport = StubTransport([StubResponse(decision_payload())])
     client, settings = make(transport)
 
-    client.decide(MESSAGES, settings.effective(None), platform="cli", provider="ollama-cloud")
+    client.decide(MESSAGES, settings.effective(), platform="cli", provider="ollama-cloud")
 
     french = set("àâäçéèêëîïôöùûüœ")
     questions = transport.last_payload["questions"]
@@ -112,7 +112,7 @@ def test_context_window_is_bounded(monkeypatch):
         {"role": "user", "content": f"tour {index} " + "x" * 5000} for index in range(6)
     ]
 
-    client.decide(long_messages, settings.effective(None))
+    client.decide(long_messages, settings.effective())
 
     state = transport.last_payload["state"]
     assert "tour 0" not in state["recent_context"]
@@ -126,7 +126,7 @@ def test_decision_interpretation(monkeypatch):
     transport = StubTransport([StubResponse(decision_payload("2", 0.91, "high", 0.66))])
     client, settings = make(transport)
 
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
 
     assert reason is None
     assert decision.model == "kimi-k3"
@@ -147,7 +147,7 @@ def test_kimi_effort_override_is_applied(monkeypatch):
     transport = StubTransport([StubResponse(decision_payload("2", 0.9, "medium", 0.9))])
     client, settings = make(transport)
 
-    decision, _ = client.decide(MESSAGES, settings.effective(None))
+    decision, _ = client.decide(MESSAGES, settings.effective())
 
     assert decision.effort_requested == "medium"
     assert decision.effort == "high"
@@ -158,7 +158,7 @@ def test_missing_api_key_short_circuits(monkeypatch):
     transport = StubTransport([])
     client, settings = make(transport)
 
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
 
     assert decision is None
     assert reason == REASON_NO_API_KEY
@@ -173,7 +173,7 @@ def test_timeout(monkeypatch):
 
     client, settings = make(StubTransport(handler=handler))
 
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_TIMEOUT
 
@@ -182,7 +182,7 @@ def test_upstream_error(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     client, settings = make(StubTransport([StubResponse(status_code=500, text="boom")]))
 
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_UPSTREAM_ERROR
 
@@ -191,7 +191,7 @@ def test_non_json_body(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     client, settings = make(StubTransport([StubResponse(payload=None, status_code=200, text="<html>")]))
 
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_MALFORMED
 
@@ -200,7 +200,7 @@ def test_missing_answers(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     client, settings = make(StubTransport([StubResponse({"answers": {}})]))
 
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_MALFORMED
 
@@ -209,7 +209,7 @@ def test_unknown_model_choice_degrades_to_the_fallback(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     client, settings = make(StubTransport([StubResponse(decision_payload("99", 0.99))]))
 
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
 
     assert reason is None
     assert decision.model == "deepseek-v4.1-flash"
@@ -220,7 +220,7 @@ def test_low_confidence_degrades(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     client, settings = make(StubTransport([StubResponse(decision_payload("2", 0.2, "high", 0.2))]))
 
-    decision, _ = client.decide(MESSAGES, settings.effective(None))
+    decision, _ = client.decide(MESSAGES, settings.effective())
 
     assert decision.model == "deepseek-v4.1-flash"
     assert decision.effort == "medium"
@@ -231,7 +231,7 @@ def test_a_confident_model_with_an_unconfident_effort_only_degrades_the_effort(m
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     client, settings = make(StubTransport([StubResponse(decision_payload("2", 0.95, "high", 0.10))]))
 
-    decision, _ = client.decide(MESSAGES, settings.effective(None))
+    decision, _ = client.decide(MESSAGES, settings.effective())
 
     assert decision.model == "kimi-k3"
     # Degraded to the configured default ("medium"), then translated for the model family:
@@ -249,7 +249,7 @@ def test_non_choice_answer_types_are_treated_as_malformed(monkeypatch):
         )
     )
 
-    decision, _ = client.decide(MESSAGES, settings.effective(None))
+    decision, _ = client.decide(MESSAGES, settings.effective())
 
     # `choice` is empty on a wrongly-typed answer, so the model is off-grid and the turn
     # falls back rather than reading a probability as a model name.
@@ -262,177 +262,27 @@ def test_custom_endpoint_is_honoured(monkeypatch):
     transport = StubTransport([StubResponse(decision_payload())])
     client, settings = make(transport, config={"endpoint": "https://example.invalid/decisions"})
 
-    client.decide(MESSAGES, settings.effective(None))
+    client.decide(MESSAGES, settings.effective())
 
     assert transport.calls[0]["url"] == "https://example.invalid/decisions"
 
 
-# -- a surface policy drives the decision path -------------------------------------
-#
-# The snapshot the router builds once per request reaches the client in place of the grid:
-# the grid offered to Jev, both threshold reads, the fallback model and the fallback effort
-# all come from it, and `max_effort` caps the level the router emits before the per-family
-# table resolves it.
-
-
-def _policy_config(**policy):
-    return {"platform_overrides": {"cron": policy}}
-
-
-def test_a_policy_grid_is_the_criteria_sent_to_jev(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    transport = StubTransport([StubResponse(decision_payload("1", 0.9, "medium", 0.9, grid_size=1))])
-    client, settings = make(transport, config=_policy_config(grid="glm-5.3: rigorous reasoning"))
-
-    effective = settings.effective(settings.policy_for("cron"))
-    client.decide(MESSAGES, effective, platform="cron", provider="ollama-cloud")
-
-    criteria = transport.last_payload["questions"]["model_route"]["criteria"]
-    assert criteria == {"1": "glm-5.3: rigorous reasoning"}
-
-
-def test_the_policy_threshold_degrades_below_it(monkeypatch):
-    """A one-entry policy grid and a confidence under the policy threshold degrade the model."""
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    transport = StubTransport([StubResponse(decision_payload("1", 0.2, "medium", 0.9, grid_size=1))])
-    client, settings = make(
-        transport,
-        config=_policy_config(grid="glm-5.3: rigorous reasoning", confidence_threshold=0.7),
-    )
-
-    effective = settings.effective(settings.policy_for("cron"))
-    decision, reason = client.decide(MESSAGES, effective, platform="cron")
-
-    assert reason is None
-    # The single-entry grid is the fallback grid too, so the degraded answer stays inside it.
-    assert decision.model == "glm-5.3"
-    assert REASON_LOW_CONFIDENCE in decision.fallback_reasons
-
-
-def test_an_off_grid_answer_degrades_to_the_policy_grid(monkeypatch):
-    """A one-entry policy grid with Jev answering an off-grid position falls back inside it."""
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    transport = StubTransport([StubResponse(decision_payload("2", 0.9, "medium", 0.9, grid_size=1))])
-    client, settings = make(transport, config=_policy_config(grid="glm-5.3: rigorous reasoning"))
-
-    effective = settings.effective(settings.policy_for("cron"))
-    decision, _ = client.decide(MESSAGES, effective, platform="cron")
-
-    assert decision.model == "glm-5.3"
-    assert REASON_UNKNOWN_CHOICE in decision.fallback_reasons
-
-
-def test_a_cap_lowers_the_applied_effort_and_keeps_the_request_visible(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    cases = [("low", "low"), ("medium", "medium"), ("high", "medium")]
-    for answer, applied in cases:
-        transport = StubTransport([StubResponse(decision_payload("1", 0.9, answer, 0.9))])
-        client, settings = make(transport, config=_policy_config(max_effort="medium"))
-
-        effective = settings.effective(settings.policy_for("cron"))
-        decision, _ = client.decide(MESSAGES, effective, platform="cron")
-
-        assert decision.model == "deepseek-v4.1-flash"
-        # The audit keeps both: what Jev answered and what the cap let through.
-        assert decision.effort_requested == answer
-        assert decision.effort == applied
-
-
-def test_a_cap_lowers_the_default_effort_fallback_too(monkeypatch):
-    """`max_effort` caps the fallback path, not only Jev's answer."""
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    transport = StubTransport([StubResponse(decision_payload("1", 0.9, "high", 0.10))])
-    client, settings = make(
-        transport, config={**_policy_config(max_effort="low"), "default_effort": "high"}
-    )
-
-    effective = settings.effective(settings.policy_for("cron"))
-    decision, _ = client.decide(MESSAGES, effective, platform="cron")
-
-    # The weak answer falls back to the configured default ("high"); the cap applies to it, and
-    # the record shows the requested level next to the one that ran.
-    assert decision.effort_requested == "high"
-    assert decision.effort == "low"
-    assert REASON_LOW_CONFIDENCE in decision.fallback_reasons
-
-
-def test_a_max_cap_is_not_used_as_the_fallback_level(monkeypatch):
-    """`max` is a ceiling, not a target: an absent effort block must not land on it."""
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    transport = StubTransport([StubResponse(decision_payload(include_effort=False))])
-    client, settings = make(
-        transport, config={**_policy_config(max_effort="max"), "default_effort": "medium"}
-    )
-
-    effective = settings.effective(settings.policy_for("cron"))
-    decision, _ = client.decide(MESSAGES, effective, platform="cron")
-
-    assert decision.effort_requested == "medium"
-    assert decision.effort == "medium"
-    assert REASON_MALFORMED in decision.fallback_reasons
-
-
-def test_a_cap_never_raises_a_confident_low_answer(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    transport = StubTransport([StubResponse(decision_payload("1", 0.9, "low", 0.9))])
-    client, settings = make(transport, config=_policy_config(max_effort="medium"))
-
-    effective = settings.effective(settings.policy_for("cron"))
-    decision, _ = client.decide(MESSAGES, effective, platform="cron")
-
-    assert decision.effort_requested == "low"
-    assert decision.effort == "low"
-
-
-def test_an_absent_effort_answer_is_omitted_without_a_cap(monkeypatch):
+def test_an_absent_effort_answer_is_omitted(monkeypatch):
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     transport = StubTransport([StubResponse(decision_payload("1", 0.9, include_effort=False))])
     client, settings = make(transport)
 
-    decision, _ = client.decide(MESSAGES, settings.effective(None))
+    decision, _ = client.decide(MESSAGES, settings.effective())
 
     assert decision.effort is None
     assert decision.effort_requested is None
 
 
-def test_an_absent_effort_answer_emits_the_cap_when_one_is_in_force(monkeypatch):
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    transport = StubTransport([StubResponse(decision_payload("1", 0.9, include_effort=False))])
-    client, settings = make(transport, config=_policy_config(max_effort="medium"))
+def test_an_off_grid_default_model_is_emitted_verbatim(monkeypatch):
+    """The operator's global grid is a catalog, never a cap on ``default_model``.
 
-    effective = settings.effective(settings.policy_for("cron"))
-    decision, _ = client.decide(MESSAGES, effective, platform="cron")
-
-    assert decision.effort_requested == "medium"
-    assert decision.effort == "medium"
-
-
-def test_a_policy_grid_resolves_the_fallback_inside_it_when_the_default_is_off_grid(monkeypatch):
-    """A policy surface never emits the off-grid global default; it re-pins inside its grid."""
-    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
-    transport = StubTransport([StubResponse(decision_payload("99", 0.99, "medium", 0.9, grid_size=1))])
-    client, settings = make(
-        transport,
-        config={
-            **_policy_config(grid="glm-5.3: rigorous reasoning"),
-            "default_model": "deepseek-v4.1-flash",  # absent from the one-entry cron grid
-        },
-    )
-
-    effective = settings.effective(settings.policy_for("cron"))
-    assert effective.grid_from_policy is True
-    decision, _ = client.decide(MESSAGES, effective, platform="cron")
-
-    assert decision.model == "glm-5.3"
-    assert REASON_UNKNOWN_CHOICE in decision.fallback_reasons
-
-
-def test_a_snapshot_without_a_policy_grid_emits_the_off_grid_default_verbatim(monkeypatch):
-    """Review finding 1: the off-grid re-pin is a policy-surface behaviour only.
-
-    An operator whose global grid excludes the configured ``default_model`` and who never sets
-    ``platform_overrides`` must keep that configured model on the wire, exactly as before this
-    change — the global grid is not a policy grid.
+    An operator whose grid excludes the configured ``default_model`` must keep that configured
+    model on the wire when the decision degrades: the grid only bounds what Jev is *offered*.
     """
     monkeypatch.setenv("OPENROUTER_API_KEY", "sk-or-test")
     transport = StubTransport([StubResponse(decision_payload("99", 0.99, "medium", 0.9, grid_size=1))])
@@ -444,8 +294,7 @@ def test_a_snapshot_without_a_policy_grid_emits_the_off_grid_default_verbatim(mo
         },
     )
 
-    effective = settings.effective(None)
-    assert effective.grid_from_policy is False
+    effective = settings.effective()
     decision, _ = client.decide(MESSAGES, effective)
 
     assert decision.model == "deepseek-v4.1-flash"
@@ -483,7 +332,7 @@ def test_openai_compatible_decider_happy_path(monkeypatch):
             "routable_providers": ["opencode-go"],
         },
     )
-    effective = settings.effective(None)
+    effective = settings.effective()
     decision, reason = client.decide(MESSAGES, effective, provider="opencode-go")
 
     assert reason is None
@@ -513,7 +362,7 @@ def test_openai_compatible_missing_api_key(monkeypatch):
             "decider_api_key_env": "OPENCODE_GO_API_KEY",
         },
     )
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_NO_API_KEY
     assert transport.call_count == 0
@@ -530,7 +379,7 @@ def test_openai_compatible_timeout(monkeypatch):
             "decider_api_key_env": "OPENCODE_GO_API_KEY",
         },
     )
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_TIMEOUT
 
@@ -546,7 +395,7 @@ def test_openai_compatible_upstream_error(monkeypatch):
             "decider_api_key_env": "OPENCODE_GO_API_KEY",
         },
     )
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_UPSTREAM_ERROR
 
@@ -563,7 +412,7 @@ def test_openai_compatible_malformed_json_content(monkeypatch):
             "decider_api_key_env": "OPENCODE_GO_API_KEY",
         },
     )
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_MALFORMED
 
@@ -581,7 +430,7 @@ def test_openai_compatible_markdown_json_fence_handled(monkeypatch):
             "decider_api_key_env": "OPENCODE_GO_API_KEY",
         },
     )
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert reason is None
     assert decision is not None
     assert decision.model == "kimi-k3"
@@ -610,7 +459,7 @@ def test_openai_compatible_off_grid_model_fails_open(monkeypatch):
             "default_model": "deepseek-v4.1-flash",
         },
     )
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_UNKNOWN_CHOICE
 
@@ -639,7 +488,7 @@ def test_openai_compatible_low_confidence_fails_open(monkeypatch):
             "default_model": "deepseek-v4.1-flash",
         },
     )
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_LOW_CONFIDENCE
 
@@ -667,7 +516,7 @@ def test_openai_compatible_invalid_confidence_fails_open(monkeypatch):
                 "decider_api_key_env": "OPENCODE_GO_API_KEY",
             },
         )
-        decision, reason = client.decide(MESSAGES, settings.effective(None))
+        decision, reason = client.decide(MESSAGES, settings.effective())
         assert decision is None
         assert reason == REASON_MALFORMED
 
@@ -687,7 +536,7 @@ def test_jev_console_decider_happy_path(monkeypatch):
     )
     decision, reason = client.decide(
         MESSAGES,
-        settings.effective(None, provider="opencode-console"),
+        settings.effective(provider="opencode-console"),
         provider="opencode-console",
     )
     assert reason is None
@@ -730,7 +579,7 @@ def test_jev_console_decider_fallback_to_paid_jev(monkeypatch):
     )
     decision, reason = client.decide(
         MESSAGES,
-        settings.effective(None, provider="opencode-console"),
+        settings.effective(provider="opencode-console"),
         provider="opencode-console",
     )
     assert reason is None
@@ -753,7 +602,7 @@ def test_jev_console_decider_missing_api_key(monkeypatch):
             "decider": "jev_console",
         },
     )
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_NO_API_KEY
     assert len(transport.calls) == 0
@@ -771,7 +620,7 @@ def test_jev_console_decider_both_models_fail(monkeypatch):
             "decider": "jev_console",
         },
     )
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_UPSTREAM_ERROR
     assert len(transport.calls) == 2
@@ -787,7 +636,7 @@ def test_jev_console_decider_malformed_json(monkeypatch):
             "console_jev_fallback_model": "",
         },
     )
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_MALFORMED
 
@@ -808,7 +657,7 @@ def test_jev_console_decider_low_confidence_degrades(monkeypatch):
     )
     decision, reason = client.decide(
         MESSAGES,
-        settings.effective(None, provider="ollama-cloud"),
+        settings.effective(provider="ollama-cloud"),
         provider="ollama-cloud",
     )
     assert decision is None
@@ -835,7 +684,7 @@ def test_jev_console_decider_timeout(monkeypatch):
             "console_jev_fallback_model": "",
         },
     )
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_TIMEOUT
 
@@ -852,7 +701,7 @@ def test_jev_console_decider_http_error_matrix(monkeypatch, status_code, caplog)
             "console_jev_fallback_model": "",
         },
     )
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_UPSTREAM_ERROR
     # Verify secret is never logged in plaintext
@@ -870,7 +719,7 @@ def test_jev_console_decider_real_non_json_body(monkeypatch, caplog):
             "console_jev_fallback_model": "",
         },
     )
-    decision, reason = client.decide(MESSAGES, settings.effective(None))
+    decision, reason = client.decide(MESSAGES, settings.effective())
     assert decision is None
     assert reason == REASON_MALFORMED
     # Verify secret is redacted
@@ -894,7 +743,7 @@ def test_jev_console_decider_response_defined_probability_domain(monkeypatch):
     )
     decision, reason = client.decide(
         MESSAGES,
-        settings.effective(None, provider="ollama-cloud"),
+        settings.effective(provider="ollama-cloud"),
         provider="ollama-cloud",
     )
     assert decision is None
@@ -928,17 +777,17 @@ def test_jev_console_decider_invalid_types_and_float_choice(monkeypatch):
         },
     )
     # 1: float choice -> unknown choice
-    dec1, r1 = client.decide(MESSAGES, settings.effective(None, provider="ollama-cloud"), provider="ollama-cloud")
+    dec1, r1 = client.decide(MESSAGES, settings.effective(provider="ollama-cloud"), provider="ollama-cloud")
     assert dec1 is None
     assert r1 == REASON_UNKNOWN_CHOICE
 
     # 2: bad type -> malformed
-    dec2, r2 = client.decide(MESSAGES, settings.effective(None, provider="ollama-cloud"), provider="ollama-cloud")
+    dec2, r2 = client.decide(MESSAGES, settings.effective(provider="ollama-cloud"), provider="ollama-cloud")
     assert dec2 is None
     assert r2 == REASON_MALFORMED
 
     # 3: bad effort -> unknown choice
-    dec3, r3 = client.decide(MESSAGES, settings.effective(None, provider="ollama-cloud"), provider="ollama-cloud")
+    dec3, r3 = client.decide(MESSAGES, settings.effective(provider="ollama-cloud"), provider="ollama-cloud")
     assert dec3 is None
     assert r3 == REASON_UNKNOWN_CHOICE
 
