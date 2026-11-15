@@ -88,7 +88,7 @@ def test_an_unoffered_max_is_not_applied_by_the_openai_compatible_decider(monkey
 
     decision, reason = client.decide(
         [{"role": "user", "content": "plan the migration"}],
-        settings.effective(None),
+        settings.effective(),
         provider="opencode-go",
     )
 
@@ -124,7 +124,7 @@ def test_an_unoffered_max_is_not_applied_on_the_legacy_wire(monkeypatch):
 
     decision, reason = decider.decide(
         [{"role": "user", "content": "plan the migration"}],
-        settings.effective(None),
+        settings.effective(),
         platform="cli",
         provider="opencode-go",
     )

@@ -405,309 +405,6 @@ def test_disabled_switch_is_inert(tmp_path):
     assert transport.call_count == 0
 
 
-def test_a_surface_disabled_by_its_policy_is_skipped_naming_the_surface(tmp_path):
-    transport = StubTransport([])
-    router, _ = build(tmp_path, transport, config={"platform_overrides": {"cron": {"enabled": False}}})
-
-    assert route(router, ollama_request(), platform="cron") is None
-    assert transport.call_count == 0
-
-    records = (tmp_path / "routes.jsonl").read_text(encoding="utf-8").strip().splitlines()
-    assert len(records) == 1
-    record = json.loads(records[0])
-    assert record["event"] == "skip"
-    assert record["reason"] == "surface_disabled"
-    assert record["platform"] == "cron"
-
-
-def test_the_policy_is_per_surface(tmp_path):
-    transport = StubTransport([StubResponse(decision_payload("1", 0.9))])
-    router, _ = build(
-        tmp_path,
-        transport,
-        config={"platform_overrides": {"cron": {"enabled": False}}},
-    )
-
-    # A cli turn on the same router still routes; only the cron surface is disabled.
-    result = route(router, ollama_request(), platform="cli")
-
-    assert result is not None
-    assert result["request"]["model"] == "deepseek-v4.1-flash"
-    assert transport.call_count == 1
-
-
-# -- the policy drives the whole decision path --------------------------------------
-
-
-CRON_POLICY = {
-    "cron": {
-        "grid": "glm-5.3: rigorous reasoning",
-        "confidence_threshold": 0.7,
-        "max_effort": "medium",
-    }
-}
-
-
-def test_a_cron_turn_gets_the_cron_grid_and_a_capped_effort(tmp_path):
-    """CAP-8: the surface grid is the one sent to Jev, and `max_effort` caps the emitted level."""
-    transport = StubTransport([StubResponse(decision_payload("3", 0.9, "high", 0.9))])
-    router, _ = build(tmp_path, transport, config={"platform_overrides": CRON_POLICY})
-
-    result = route(router, ollama_request(), platform="cron", model="glm-5.3")
-
-    # The one-entry cron grid is what Jev was offered — position `3` is off it, so the answer
-    # is unknown and falls back inside the cron grid.
-    criteria = transport.last_payload["questions"]["model_route"]["criteria"]
-    assert criteria == {"1": "glm-5.3: rigorous reasoning"}
-    assert result["request"]["model"] == "glm-5.3"
-    assert result["request"]["reasoning_effort"] == "medium"
-    record = json.loads((tmp_path / "routes.jsonl").read_text(encoding="utf-8").strip().splitlines()[-1])
-    assert "unknown_choice" in record["fallback_reasons"]
-
-
-def test_an_off_grid_cron_answer_never_leaves_the_cron_grid(tmp_path):
-    transport = StubTransport([StubResponse(decision_payload("2", 0.99, "high", 0.9))])
-    router, _ = build(tmp_path, transport, config={"platform_overrides": CRON_POLICY})
-
-    result = route(router, ollama_request(), platform="cron", model="glm-5.3")
-
-    assert result["request"]["model"] == "glm-5.3"
-    record = json.loads((tmp_path / "routes.jsonl").read_text(encoding="utf-8").strip().splitlines()[-1])
-    assert "unknown_choice" in record["fallback_reasons"]
-
-
-def test_a_cron_fallback_below_the_policy_threshold_stays_in_the_cron_grid(tmp_path):
-    transport = StubTransport([StubResponse(decision_payload("1", 0.2, "high", 0.9, grid_size=1))])
-    router, _ = build(tmp_path, transport, config={"platform_overrides": CRON_POLICY})
-
-    result = route(router, ollama_request(), platform="cron", model="glm-5.3")
-
-    assert result["request"]["model"] == "glm-5.3"
-    assert result["request"]["reasoning_effort"] == "medium"
-    record = json.loads((tmp_path / "routes.jsonl").read_text(encoding="utf-8").strip().splitlines()[-1])
-    assert "low_confidence" in record["fallback_reasons"]
-
-
-def test_a_cli_turn_on_the_same_router_routes_on_the_global_grid(tmp_path):
-    """The cron policy narrows cron only; a cli turn still uses the six-entry global grid."""
-    transport = StubTransport(
-        [
-            StubResponse(decision_payload("3", 0.9, "high", 0.9)),  # cron: off the one-entry grid
-            StubResponse(decision_payload("2", 0.9, "high", 0.8)),  # cli: global position 2
-        ]
-    )
-    router, _ = build(tmp_path, transport, config={"platform_overrides": CRON_POLICY})
-
-    cron = route(router, ollama_request(), platform="cron", model="glm-5.3", turn_id="t-cron")
-    cli = route(
-        router, ollama_request(), platform="cli", model="deepseek-v4.1-flash", turn_id="t-cli",
-        api_request_id="t-cli:api:0",
-    )
-
-    assert cron["request"]["model"] == "glm-5.3"
-    assert cli["request"]["model"] == "kimi-k3"
-    # The cli turn's payload was the six-entry global grid, not the cron surface's one entry.
-    criteria = transport.calls[1]["json"]["questions"]["model_route"]["criteria"]
-    assert set(criteria) == {"1", "2", "3", "4", "5", "6"}
-
-
-def test_max_effort_caps_the_default_effort_fallback_on_a_surface(tmp_path):
-    transport = StubTransport([StubResponse(decision_payload("1", 0.9, "high", 0.1))])
-    router, _ = build(
-        tmp_path,
-        transport,
-        config={
-            "default_effort": "high",
-            "platform_overrides": {"cron": {"grid": "glm-5.3: rigorous reasoning", "max_effort": "low"}},
-        },
-    )
-
-    result = route(router, ollama_request(), platform="cron", model="glm-5.3")
-
-    assert result["request"]["model"] == "glm-5.3"
-    assert result["request"]["reasoning_effort"] == "low"
-
-
-
-def test_end_to_end_cron_turn_is_capped_and_cli_turn_is_not_in_one_run(tmp_path):
-    """Proves CAP-8 through one run of the real middleware callback across four turns.
-
-    1. cron turn: stub Jev answers off the cron grid at high; goes out on cron-grid model at capped effort (medium).
-    2. cli turn: in the same run, routes on the global grid (kimi-k3 at high).
-    3. disabled cron turn: cron policy with enabled: false leaves turn byte-identical to plugin-disabled run.
-    4. unmapped turn: platform absent from the map with off-grid model leaves turn byte-identical to plugin-disabled run.
-
-    Captures provider kwargs and audit records for all four turns:
-    - Never a model or effort outside the cron policy on cron turns.
-    - Exactly one skip entry naming the disabled surface (reason == 'surface_disabled', platform == 'cron').
-    - Byte-identical payloads on the disabled and unmapped surfaces.
-    """
-    transport = StubTransport(
-        [
-            StubResponse(decision_payload("3", 0.9, "high", 0.9)),  # turn 1 (cron): off-grid answer at high
-            StubResponse(decision_payload("2", 0.9, "high", 0.8)),  # turn 2 (cli): global position 2 at high
-        ]
-    )
-
-    current_config = {"platform_overrides": dict(CRON_POLICY)}
-    audit = StubState(tmp_path)
-    router = Router(
-        lambda: load_settings(lambda k, default=None: current_config.get(k, default)),
-        get_state=lambda: audit,
-        client_factory=lambda settings: _ClientWith(transport, settings),
-        catalog=_NoCatalog(),
-    )
-
-    disabled_router, _ = build(tmp_path / "disabled", StubTransport([]), config={"enabled": False})
-
-    def dispatch(r, req, **kwargs):
-        res = r.on_llm_request(req, dict(req), **kwargs)
-        return res, (res["request"] if res is not None else req)
-
-
-    # Turn 1: cron turn under CRON_POLICY (grid: glm-5.3, max_effort: medium)
-    req_cron = ollama_request(model="glm-5.3")
-    res_cron, cron_kwargs = dispatch(
-        router,
-        req_cron,
-        turn_id="turn-cron",
-        session_id="session-cron",
-        platform="cron",
-        model="glm-5.3",
-        provider="ollama-cloud",
-        base_url="https://ollama.com/v1",
-        api_mode="chat_completions",
-        api_call_count=0,
-        api_request_id="turn-cron:api:0",
-    )
-    assert res_cron is not None
-    assert cron_kwargs["model"] == "glm-5.3"
-    assert cron_kwargs["reasoning_effort"] == "medium"
-
-    # Turn 2: cli turn in the same run (routes on global grid)
-    req_cli = ollama_request(model="deepseek-v4.1-flash")
-    res_cli, cli_kwargs = dispatch(
-        router,
-        req_cli,
-        turn_id="turn-cli",
-        session_id="session-cli",
-        platform="cli",
-        model="deepseek-v4.1-flash",
-        provider="ollama-cloud",
-        base_url="https://ollama.com/v1",
-        api_mode="chat_completions",
-        api_call_count=0,
-        api_request_id="turn-cli:api:0",
-    )
-    assert res_cli is not None
-    assert cli_kwargs["model"] == "kimi-k3"
-    assert cli_kwargs["reasoning_effort"] == "high"
-
-    # Turn 3: cron policy with enabled: false
-    current_config["platform_overrides"] = {"cron": {"enabled": False}}
-    req_cron_disabled = ollama_request(model="glm-5.3")
-    res_cron_disabled, disabled_cron_kwargs = dispatch(
-        router,
-        req_cron_disabled,
-        turn_id="turn-cron-disabled",
-        session_id="session-cron-disabled",
-        platform="cron",
-        model="glm-5.3",
-        provider="ollama-cloud",
-        base_url="https://ollama.com/v1",
-        api_mode="chat_completions",
-        api_call_count=0,
-        api_request_id="turn-cron-disabled:api:0",
-    )
-    res_ref_disabled, ref_disabled_cron_kwargs = dispatch(
-        disabled_router,
-        req_cron_disabled,
-        turn_id="turn-ref-cron-disabled",
-        session_id="session-ref-cron-disabled",
-        platform="cron",
-        model="glm-5.3",
-        provider="ollama-cloud",
-        base_url="https://ollama.com/v1",
-        api_mode="chat_completions",
-        api_call_count=0,
-        api_request_id="turn-ref-cron-disabled:api:0",
-    )
-    assert res_cron_disabled is None
-    assert res_ref_disabled is None
-    assert disabled_cron_kwargs == ref_disabled_cron_kwargs == req_cron_disabled
-
-    # Turn 4: platform absent from the map with off-grid model
-    req_unmapped = ollama_request(model="gpt-9-ultra")
-    res_unmapped, unmapped_kwargs = dispatch(
-        router,
-        req_unmapped,
-        turn_id="turn-unmapped",
-        session_id="session-unmapped",
-        platform="telegram",
-        model="gpt-9-ultra",
-        provider="ollama-cloud",
-        base_url="https://ollama.com/v1",
-        api_mode="chat_completions",
-        api_call_count=0,
-        api_request_id="turn-unmapped:api:0",
-    )
-    res_ref_unmapped, ref_unmapped_kwargs = dispatch(
-        disabled_router,
-        req_unmapped,
-        turn_id="turn-ref-unmapped",
-        session_id="session-ref-unmapped",
-        platform="telegram",
-        model="gpt-9-ultra",
-        provider="ollama-cloud",
-        base_url="https://ollama.com/v1",
-        api_mode="chat_completions",
-        api_call_count=0,
-        api_request_id="turn-ref-unmapped:api:0",
-    )
-    assert res_unmapped is None
-    assert res_ref_unmapped is None
-    assert unmapped_kwargs == ref_unmapped_kwargs == req_unmapped
-
-    # Audit records check
-    lines = (tmp_path / "routes.jsonl").read_text(encoding="utf-8").strip().splitlines()
-    assert len(lines) == 4
-    records = [json.loads(line) for line in lines]
-
-    # Turn 1 audit: routed on cron grid at or below ceiling
-    assert records[0]["event"] == "route"
-    assert records[0]["platform"] == "cron"
-    assert records[0]["model"] == "glm-5.3"
-    assert records[0]["effort"] == "medium"
-
-    # Turn 2 audit: routed on global grid
-    assert records[1]["event"] == "route"
-    assert records[1]["platform"] == "cli"
-    assert records[1]["model"] == "kimi-k3"
-    assert records[1]["effort"] == "high"
-
-    # Turn 3 audit: skip entry naming the disabled surface
-    assert records[2]["event"] == "skip"
-    assert records[2]["reason"] == "surface_disabled"
-    assert records[2]["platform"] == "cron"
-
-    # Turn 4 audit: unmapped surface skipped model
-    assert records[3]["event"] == "skip"
-    assert records[3]["reason"] == "model_not_in_grid"
-    assert records[3]["platform"] == "telegram"
-
-    # Invariant: exactly one skip entry naming the disabled surface
-    disabled_skips = [r for r in records if r.get("reason") == "surface_disabled"]
-    assert len(disabled_skips) == 1
-    assert disabled_skips[0]["platform"] == "cron"
-
-    # Jev transport calls: only the two routed turns reached Jev
-    assert transport.call_count == 2
-    assert set(transport.calls[0]["json"]["questions"]["model_route"]["criteria"]) == {"1"}
-    assert set(transport.calls[1]["json"]["questions"]["model_route"]["criteria"]) == {
-        "1", "2", "3", "4", "5", "6",
-    }
-
-
 def test_a_turn_without_a_user_message_is_skipped(tmp_path):
     transport = StubTransport([])
     router, _ = build(tmp_path, transport)
@@ -850,7 +547,8 @@ def test_openai_compatible_decider_routing_end_to_end(tmp_path, monkeypatch):
     assert "latency_ms" in records[0]
 
 
-def test_confidence_threshold_per_decider(tmp_path, monkeypatch):
+def test_confidence_threshold_applies_to_every_decider(tmp_path, monkeypatch):
+    """One threshold for the deployment, whichever decider answers."""
     monkeypatch.setenv("OPENCODE_GO_API_KEY", "sk-secret")
     resp_payload = {
         "choices": [
@@ -871,7 +569,7 @@ def test_confidence_threshold_per_decider(tmp_path, monkeypatch):
             "decider": "openai_compatible",
             "decider_base_url": "https://opencode.ai/zen/go/v1",
             "decider_api_key_env": "OPENCODE_GO_API_KEY",
-            "confidence_threshold_per_decider": {"openai_compatible": 0.85},
+            "confidence_threshold": 0.85,
             "default_model": "deepseek-v4.1-flash",
             "routable_providers": ["opencode-go"],
         },
@@ -1220,7 +918,7 @@ def test_jev_console_decider_generation_route_go_uses_the_single_model_catalog(t
     )
     monkeypatch.setattr(router, "_data_dir", lambda: str(tmp_path / "audit"))
 
-    effective = settings.effective(None, provider="opencode-go")
+    effective = settings.effective(provider="opencode-go")
     assert [e.model_id for e in effective.grid] == ["deepseek-v4.1-flash"]
     assert effective.default_model == "deepseek-v4.1-flash"
 
@@ -1349,7 +1047,7 @@ def test_opencode_go_route_cap_leaves_one_model_and_no_question(tmp_path, monkey
 
     # The operator's grid is capped to the catalog before it ever becomes the question.
     assert [
-        e.model_id for e in settings.effective(None, provider="opencode-go").grid
+        e.model_id for e in settings.effective(provider="opencode-go").grid
     ] == ["deepseek-v4.1-flash"]
 
     original = ollama_request(model="deepseek-v4.1-flash")
@@ -1394,7 +1092,7 @@ def test_jev_console_decider_generation_route_commandcode_uses_the_namespaced_ca
     )
     monkeypatch.setattr(router, "_data_dir", lambda: str(tmp_path / "audit"))
 
-    effective = settings.effective(None, provider="commandcode")
+    effective = settings.effective(provider="commandcode")
     assert [e.model_id for e in effective.grid] == ["deepseek/deepseek-v4.1-flash"]
     assert effective.default_model == "deepseek/deepseek-v4.1-flash"
 
@@ -1612,7 +1310,7 @@ def test_commandcode_route_cap_leaves_one_model_and_no_question(tmp_path, monkey
 
     # The operator's grid is capped to the catalog before it ever becomes the question.
     assert [
-        e.model_id for e in settings.effective(None, provider="commandcode").grid
+        e.model_id for e in settings.effective(provider="commandcode").grid
     ] == ["deepseek/deepseek-v4.1-flash"]
 
     original = ollama_request(model="deepseek/deepseek-v4.1-flash")
@@ -1645,7 +1343,7 @@ def test_console_route_no_longer_applies_normal_mimo(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(router, "_data_dir", lambda: str(tmp_path / "audit"))
 
-    assert [e.model_id for e in settings.effective(None, provider="opencode-console").grid] == [
+    assert [e.model_id for e in settings.effective(provider="opencode-console").grid] == [
         "deepseek-v4.1-flash"
     ]
 
@@ -1675,7 +1373,7 @@ def test_opencode_go_legacy_decider_keeps_its_configured_grid(tmp_path, monkeypa
     )
     monkeypatch.setattr(router, "_data_dir", lambda: str(tmp_path / "audit"))
 
-    assert [e.model_id for e in settings.effective(None, provider="opencode-go").grid] == [
+    assert [e.model_id for e in settings.effective(provider="opencode-go").grid] == [
         "deepseek-v4.1-flash",
         "kimi-k3",
     ]
@@ -1926,7 +1624,7 @@ def test_middleware_zero_effort_confidence_replay_policy_and_no_effort_response(
     fresh_decision, fresh_reason = JevClient(
         load_settings(lambda k, d=None: current_config.get(k, d)),
         transport=StubTransport([StubResponse(p_zero_effort)]),
-    ).decide(req1["messages"], load_settings(lambda k, d=None: current_config.get(k, d)).effective(None, provider="opencode-console"), provider="opencode-console")
+    ).decide(req1["messages"], load_settings(lambda k, d=None: current_config.get(k, d)).effective(provider="opencode-console"), provider="opencode-console")
     assert fresh_decision is None
     assert fresh_reason == REASON_LOW_CONFIDENCE
 
@@ -1991,7 +1689,7 @@ _CONSOLE_TEST_SECRET = "test-console-secret-key-999888"
         ("effort_confidence_nan", StubResponse({"answers": {"model_route": {"type": "choice", "choice": "2", "confidence": 0.95, "probabilities": {"1": 0.0, "2": 1.0}}, "reasoning_effort": {"type": "choice", "choice": "high", "confidence": float("nan"), "probabilities": {"low": 0.0, "medium": 0.0, "high": 1.0}}}})),
         ("effort_probabilities_bad_key", StubResponse({"answers": {"model_route": {"type": "choice", "choice": "2", "confidence": 0.95, "probabilities": {"1": 0.0, "2": 1.0}}, "reasoning_effort": {"type": "choice", "choice": "high", "confidence": 0.95, "probabilities": {"extreme": 1.0}}}})),
         ("effort_choice_invalid", StubResponse({"answers": {"model_route": {"type": "choice", "choice": "2", "confidence": 0.95, "probabilities": {"1": 0.0, "2": 1.0}}, "reasoning_effort": {"type": "choice", "choice": "maximum", "confidence": 0.95, "probabilities": {"low": 0.0, "medium": 0.0, "high": 1.0}}}})),
-        ("effort_criteria_remapped", StubResponse({"answers": {"model_route": {"type": "choice", "choice": "2", "confidence": 0.95, "probabilities": {"1": 0.0, "2": 1.0}}, "reasoning_effort": {"type": "choice", "choice": "high", "criteria": {"3": "extreme"}, "confidence": 0.95, "probabilities": {"low": 0.0, "medium": 0.0, "high": 1.0}}}})),
+        ("effort_rubric_remapped", StubResponse({"answers": {"model_route": {"type": "choice", "choice": "2", "confidence": 0.95, "probabilities": {"1": 0.0, "2": 1.0}}, "reasoning_effort": {"type": "choice", "choice": "high", "criteria": {"3": "extreme"}, "confidence": 0.95, "probabilities": {"low": 0.0, "medium": 0.0, "high": 1.0}}}})),
     ],
 )
 def test_middleware_fail_open_console_negative_matrix(tmp_path, monkeypatch, caplog, case_name, resp_or_exc):
@@ -2267,7 +1965,7 @@ def test_codex_route_never_offers_an_id_the_backend_does_not_serve(tmp_path, mon
         }.get(key, default)
     )
     assert [
-        entry.model_id for entry in capped.effective(None, provider="openai-codex").grid
+        entry.model_id for entry in capped.effective(provider="openai-codex").grid
     ] == expected
 
     # And a decision that names it anyway is refused before it can reach the provider.

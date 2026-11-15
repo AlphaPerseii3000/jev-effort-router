@@ -63,7 +63,6 @@ class Memo:
     decider_commandcode_key_env: str = ""
     decider_fallback_reason: Optional[str] = None
     confidence_threshold: float = 0.0
-    max_effort: Optional[str] = None
     decider_fallback_model: str = ""
     decider_key_env: str = ""
     grid_signature: tuple = ()

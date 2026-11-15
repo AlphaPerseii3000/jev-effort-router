@@ -707,26 +707,6 @@ def test_a_level_above_the_routes_family_cap_is_omitted_not_clamped(profile, tmp
     assert skip["reconciled_effort"] is None
 
 
-def test_a_surface_max_effort_still_caps_the_sessions_level(profile, tmp_path):
-    """The operator's ceiling outranks the row: ``high`` becomes ``medium``."""
-    write_row(
-        profile,
-        {
-            "model": HAIKU,
-            "provider": NATIVE,
-            "reasoning_config": {"enabled": True, "effort": "high"},
-        },
-    )
-    transport = low_confidence_transport()
-    config = _config("apply", platform_overrides={"webui": {"max_effort": "medium"}})
-    router, _ = build(tmp_path, transport, config=config)
-
-    routed = call(router)["request"]
-
-    assert routed["model"] == HAIKU
-    assert wire_level(routed) == "medium"
-
-
 # -- T11/T12: what is not reconciled -------------------------------------------
 
 

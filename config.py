@@ -201,7 +201,7 @@ DEFAULT_SESSION_SELECTION_PROVIDER_MAP: Mapping[str, str] = MappingProxyType({})
 NATIVE_ANTHROPIC_PROVIDERS: frozenset = frozenset({ANTHROPIC_PROVIDER, *ANTHROPIC_PROVIDER_ALIASES})
 
 #: The levels the router may *ask* Jev for. ``max`` is part of the vocabulary — it can be
-#: requested, accepted, capped by ``max_effort`` and audited — but it is offered by a route only
+#: requested, accepted and audited — but it is offered by a route only
 #: where its effort map declares it (``effort.offered_levels``), so no answer is asked for and
 #: then clamped away.
 EFFORT_LEVELS: Tuple[str, ...] = ("low", "medium", "high", "max")
@@ -531,21 +531,6 @@ def resolve_commandcode_fallback(*, base_url: Any, model: Any, api_key_env: Any)
 
 
 @dataclass(frozen=True)
-class PlatformPolicy:
-    """One surface's routing policy, as declared under ``platform_overrides``.
-
-    Every field is optional and ``None`` means "inherit the global setting", deliberately
-    distinct from a parsed ``False``/``0.0``. ``grid`` is ``None`` unless a policy grid both
-    was declared and parsed; the resolved grid then falls to the effective global one.
-    """
-
-    enabled: Optional[bool] = None
-    grid: Optional[Tuple[Entry, ...]] = None
-    confidence_threshold: Optional[float] = None
-    max_effort: Optional[str] = None
-
-
-@dataclass(frozen=True)
 class SessionSelectionSettings:
     """How the webui session's own model/effort selection is treated, under ``session_selection``.
 
@@ -613,22 +598,13 @@ class SessionSelectionSettings:
 class EffectiveSettings:
     """The frozen per-request snapshot the decision path consumes.
 
-    Built once per request from the global :class:`Settings` and, when a surface has one, its
-    :class:`PlatformPolicy`. A policy field overrides the global value; everything else is the
-    global setting unchanged.
+    Built once per request from the global :class:`Settings` and the provider's route catalog.
     """
 
     grid: Tuple[Entry, ...] = field(default_factory=lambda: tuple(DEFAULT_GRID))
     confidence_threshold: float = DEFAULT_CONFIDENCE_THRESHOLD
     default_model: str = DEFAULT_MODEL
     default_effort: str = DEFAULT_EFFORT
-    max_effort: Optional[str] = None
-    #: Whether ``grid`` is the surface's own parsed policy grid (``True``) or the global grid
-    #: (``False``, whether from an absent policy or one whose grid did not parse). The decision
-    #: path needs the distinction: an off-grid ``default_model`` resolves to the effective grid
-    #: only when a policy grid is genuinely in force, so a surface the policy does not name keeps
-    #: today's configured default verbatim.
-    grid_from_policy: bool = False
 
     def entry_for(self, model_id: str) -> Optional[Entry]:
         return _entry_for(self.grid, model_id)
@@ -661,10 +637,6 @@ class Settings:
     log_skips: bool = True
     include_user_message_in_audit: bool = False
     grid: Tuple[Entry, ...] = field(default_factory=lambda: tuple(DEFAULT_GRID))
-    #: A read-only mapping, so the frozen snapshot cannot be mutated through the field.
-    platform_overrides: Mapping[str, PlatformPolicy] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
     decider: str = DEFAULT_DECIDER
     decider_base_url: str = ""
     decider_model: str = ""
@@ -686,16 +658,6 @@ class Settings:
     effort_maps: Mapping[str, Any] = field(
         default_factory=lambda: MappingProxyType({})
     )
-    confidence_threshold_per_decider: Mapping[str, float] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    #: Operator overrides of the built-in effort rubric (level → text) and of its instructions.
-    #: Empty means "use the built-in text"; the merge happens where the question is built, so a
-    #: single level can be reworded without losing the others.
-    effort_criteria: Mapping[str, str] = field(
-        default_factory=lambda: MappingProxyType({})
-    )
-    effort_instructions: str = ""
     #: The webui session-selection reconciliation (see :class:`SessionSelectionSettings`).
     #: Defaults to ``mode: off``, which leaves every existing deployment untouched.
     session_selection: SessionSelectionSettings = field(
@@ -722,11 +684,6 @@ class Settings:
 
     def entry_for(self, model_id: str) -> Optional[Entry]:
         return _entry_for(self.grid, model_id)
-
-    def policy_for(self, platform: str) -> Optional[PlatformPolicy]:
-        """The policy declared for ``platform``, or ``None`` when it is unlisted."""
-        key = (platform or "").strip().lower()
-        return self.platform_overrides.get(key)
 
     def grid_for(self, provider: str = "") -> Tuple[Entry, ...]:
         """The grid for ``provider``, or the global grid when unlisted.
@@ -815,13 +772,6 @@ class Settings:
             return CommandCodeFallback()
         return self.commandcode_fallback()
 
-    def confidence_threshold_for(self, decider: Optional[str] = None) -> float:
-        """The confidence threshold for ``decider``."""
-        target = (decider or self.decider).strip().lower()
-        if target in self.confidence_threshold_per_decider:
-            return self.confidence_threshold_per_decider[target]
-        return self.confidence_threshold
-
     def is_provider_routable(self, provider: str) -> bool:
         """Whether ``provider`` is in the configured routable providers list.
 
@@ -839,88 +789,27 @@ class Settings:
         group = _provider_group(key) or {key}
         return any(p.strip().lower() in group for p in self.routable_providers)
 
-    def effective(self, policy: Optional[PlatformPolicy], provider: str = "") -> EffectiveSettings:
-        """Resolve one frozen snapshot, applying ``policy`` over the global settings.
+    def effective(self, provider: str = "") -> EffectiveSettings:
+        """Resolve one frozen snapshot for ``provider``'s route.
 
-        A policy field of ``None`` inherits the global value; a policy ``grid`` that did not
-        parse also inherits, so a bad policy grid never replaces the operator's global grid.
+        The route's grid governs the snapshot; when the route pins a catalog, an off-catalog
+        ``default_model`` is re-pinned to the route's own default so the decision path can never
+        name a model the route does not serve.
         """
         base_grid = self.grid_for(provider)
         key = (provider or "").strip().lower()
         allowlist = route_allowlist(key, self.decider)
-        base_threshold = self.confidence_threshold_for(self.decider)
         default_model = self.default_model
         if allowlist is not None and default_model not in allowlist:
             default_model = (
                 route_default_model(key) or (base_grid[0].model_id if base_grid else DEFAULT_MODEL)
             )
-        if policy is None:
-            return EffectiveSettings(
-                grid=base_grid,
-                confidence_threshold=base_threshold,
-                default_model=default_model,
-                default_effort=self.default_effort,
-                max_effort=None,
-                grid_from_policy=False,
-            )
-        grid = policy.grid if policy.grid is not None else base_grid
-        if allowlist is not None and policy.grid is not None:
-            grid = _capped(policy.grid, allowlist, base_grid)
-        threshold = (
-            policy.confidence_threshold
-            if policy.confidence_threshold is not None
-            else base_threshold
-        )
         return EffectiveSettings(
-            grid=grid,
-            confidence_threshold=threshold,
+            grid=base_grid,
+            confidence_threshold=self.confidence_threshold,
             default_model=default_model,
             default_effort=self.default_effort,
-            max_effort=policy.max_effort,
-            grid_from_policy=policy.grid is not None,
         )
-
-
-def parse_platform_overrides(raw: Any) -> Mapping[str, PlatformPolicy]:
-    """Parse ``platform_overrides`` into frozen per-platform policies.
-
-    An entry is kept only when its value is a mapping with at least one recognised key that
-    parsed. Anything else — a non-map value, an unknown key, or a value that does not coerce —
-    is dropped outright, so "unusable" and "unparseable grid alone" are observably the same
-    thing: no policy, the global settings in force. Never raises.
-
-    Returns a read-only ``MappingProxyType``: ``Settings`` is frozen, so the mapping it carries
-    must be too, or the snapshot is silently mutable through the field.
-    """
-    if not isinstance(raw, dict):
-        return MappingProxyType({})
-
-    policies: Dict[str, PlatformPolicy] = {}
-    for key, value in raw.items():
-        platform = str(key or "").strip().lower()
-        if not platform or not isinstance(value, dict):
-            continue
-
-        enabled = _as_optional_bool(value["enabled"]) if "enabled" in value else None
-        threshold = (
-            _as_optional_float(value["confidence_threshold"], minimum=0.0)
-            if "confidence_threshold" in value
-            else None
-        )
-        max_effort = (
-            _as_optional_choice(value["max_effort"], EFFORT_LEVELS) if "max_effort" in value else None
-        )
-        grid = parse_grid_strict(value["grid"]) if "grid" in value else None
-
-        if enabled is None and threshold is None and max_effort is None and grid is None:
-            continue
-        policies[platform] = PlatformPolicy(
-            enabled=enabled,
-            grid=grid,
-            confidence_threshold=threshold,
-            max_effort=max_effort,
-        )
-    return MappingProxyType(policies)
 
 
 def _parse_session_platforms(raw: Any) -> Tuple[str, ...]:
@@ -1071,57 +960,6 @@ def parse_effort_maps(raw: Any) -> Mapping[str, Any]:
     return MappingProxyType(result)
 
 
-def parse_confidence_threshold_per_decider(raw: Any) -> Mapping[str, float]:
-    """Parse per-decider confidence threshold overrides."""
-    if not isinstance(raw, dict):
-        return MappingProxyType({})
-    result: Dict[str, float] = {}
-    for key, value in raw.items():
-        decider_name = str(key or "").strip().lower()
-        parsed = _as_optional_float(value, minimum=0.0)
-        if parsed is not None:
-            result[decider_name] = parsed
-    return MappingProxyType(result)
-
-
-#: Bounds on the rubric knobs. The payload budget is measured with the built-in text; an operator
-#: override longer than this is refused (the whole knob falls back) rather than allowed to blow
-#: past the endpoint's context.
-MAX_EFFORT_CRITERION_CHARS = 2000
-MAX_EFFORT_INSTRUCTIONS_CHARS = 4000
-
-
-def parse_effort_criteria(raw: Any) -> Mapping[str, str]:
-    """Parse the ``effort_criteria`` knob: a level → text override of the built-in rubric.
-
-    A knob is the whole mapping or nothing. A level outside :data:`EFFORT_LEVELS`, a non-string
-    text, an empty one or one longer than :data:`MAX_EFFORT_CRITERION_CHARS` makes the whole knob
-    unusable, and it then falls back to the built-in rubric rather than shipping a half-edited
-    vocabulary to the decider. A *partial* mapping of valid levels is kept: it overrides only those
-    levels, and the built-in text covers the rest.
-    """
-    if not isinstance(raw, dict):
-        return MappingProxyType({})
-    criteria: Dict[str, str] = {}
-    for key, value in raw.items():
-        level = str(key or "").strip().lower()
-        if level not in EFFORT_LEVELS or not isinstance(value, str):
-            return MappingProxyType({})
-        text = value.strip()
-        if not text or len(text) > MAX_EFFORT_CRITERION_CHARS:
-            return MappingProxyType({})
-        criteria[level] = text
-    return MappingProxyType(criteria) if criteria else MappingProxyType({})
-
-
-def parse_effort_instructions(raw: Any) -> str:
-    """Parse the ``effort_instructions`` knob; anything unusable falls back to the built-in text."""
-    if not isinstance(raw, str):
-        return ""
-    text = raw.strip()
-    return text if len(text) <= MAX_EFFORT_INSTRUCTIONS_CHARS else ""
-
-
 def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
     """Build a :class:`Settings` from ``ctx.get_config`` (or from no config at all)."""
     read = get_config if callable(get_config) else (lambda _key, default=None: default)
@@ -1178,7 +1016,6 @@ def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
         log_skips=_as_bool(read("log_skips", True), True),
         include_user_message_in_audit=_as_bool(read("include_user_message_in_audit", False), False),
         grid=grid,
-        platform_overrides=parse_platform_overrides(read("platform_overrides", None)),
         decider=_as_choice(read("decider", DEFAULT_DECIDER), DECIDERS, DEFAULT_DECIDER),
         decider_base_url=_as_text(read("decider_base_url", ""), ""),
         decider_model=_as_text(read("decider_model", ""), ""),
@@ -1193,12 +1030,7 @@ def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
         routable_providers=routable_providers if routable_providers else DEFAULT_ROUTABLE_PROVIDERS,
         grids=parse_grids(read("grids", None)),
         effort_maps=parse_effort_maps(read("effort_maps", None)),
-        effort_criteria=parse_effort_criteria(read("effort_criteria", None)),
-        effort_instructions=parse_effort_instructions(read("effort_instructions", "")),
         session_selection=parse_session_selection(read("session_selection", None)),
-        confidence_threshold_per_decider=parse_confidence_threshold_per_decider(
-            read("confidence_threshold_per_decider", None)
-        ),
     )
     # Sanitized on purpose: the message names the setting at fault and never its value, and it is
     # emitted once per settings load — even when the active decider is not jev_console, because a

@@ -58,7 +58,7 @@ def test_live_opencode_decider_call(monkeypatch):
     settings = load_settings(lambda k, d=None: conf.get(k, d))
     decider = OpenAICompatibleDecider(settings)
     messages = [{"role": "user", "content": "Please refactor this complex 500-line database migration algorithm"}]
-    effective = settings.effective(None, provider="opencode-go")
+    effective = settings.effective(provider="opencode-go")
     decision, reason = decider.decide(messages, effective, provider="opencode-go")
 
     assert decision is not None, f"Live decider failed: {reason}"

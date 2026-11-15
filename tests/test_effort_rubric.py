@@ -145,57 +145,15 @@ def test_the_effort_question_lists_only_the_offered_levels():
     assert set(default[EFFORT_QUESTION_ID]["criteria"]) == {"low", "medium", "high"}
 
 
-def test_the_rubric_knobs_rewrite_the_question_without_losing_the_other_rungs():
-    settings = settings_for(
-        {
-            "effort_criteria": {"high": "our own high-effort text"},
-            "effort_instructions": "our own routing rule",
-        }
-    )
+def test_the_effort_question_uses_the_built_in_rubric_verbatim():
+    """With the operator knobs gone, ``state.py`` is the single source of the rubric."""
+    questions = build_questions(SINGLE, levels=("low", "high"))
 
-    questions = build_questions(
-        SINGLE,
-        levels=("low", "high"),
-        criteria_override=settings.effort_criteria,
-        instructions_override=settings.effort_instructions,
-    )
-
-    criteria = questions[EFFORT_QUESTION_ID]["criteria"]
-    assert criteria["high"] == "our own high-effort text"
-    assert criteria["low"] == EFFORT_CRITERIA["low"]
-    assert questions[EFFORT_QUESTION_ID]["instructions"] == "our own routing rule"
-
-
-@pytest.mark.parametrize(
-    "knob",
-    [
-        {"ultra": "a level the vocabulary does not have"},
-        {"low": ""},
-        {"low": 3},
-        {"low": "ok", "high": None},
-        ["low", "high"],
-    ],
-)
-def test_an_invalid_criteria_knob_falls_back_to_the_built_in_rubric(knob):
-    settings = settings_for({"effort_criteria": knob})
-
-    assert settings.effort_criteria == {}
-    questions = build_questions(
-        SINGLE, levels=DEFAULT_OFFERED_LEVELS, criteria_override=settings.effort_criteria
-    )
-    assert questions[EFFORT_QUESTION_ID]["criteria"] == {
-        level: EFFORT_CRITERIA[level] for level in DEFAULT_OFFERED_LEVELS
-    }
-
-
-@pytest.mark.parametrize("knob", [7, "", "   ", None])
-def test_an_invalid_instructions_knob_falls_back_to_the_built_in_rule(knob):
-    settings = settings_for({"effort_instructions": knob})
-
-    questions = build_questions(
-        SINGLE, levels=DEFAULT_OFFERED_LEVELS, instructions_override=settings.effort_instructions
-    )
     assert questions[EFFORT_QUESTION_ID]["instructions"] == EFFORT_INSTRUCTIONS
+    assert questions[EFFORT_QUESTION_ID]["criteria"] == {
+        "low": EFFORT_CRITERIA["low"],
+        "high": EFFORT_CRITERIA["high"],
+    }
 
 
 # -- previous turn signal ------------------------------------------------------------
@@ -465,33 +423,13 @@ def test_dropping_the_effort_map_keeps_the_max_option_and_the_wire_value(tmp_pat
     assert (record["effort_requested"], record["effort"]) == ("max", "max")
 
 
-def test_a_capped_max_is_audited_with_the_level_that_was_asked(tmp_path, monkeypatch):
+def test_the_replay_keeps_the_asked_level(tmp_path, monkeypatch):
+    """The memo replay re-resolves the recorded level rather than the decider's answer twice."""
     from stubs import StubResponse, StubTransport
     from test_router import route
 
-    config = dict(GO_CONFIG, platform_overrides={"cli": {"max_effort": "high"}})
     transport = StubTransport([StubResponse(_max_answer())])
-    router, settings = _go_router(tmp_path, monkeypatch, transport, config)
-
-    result = route(router, provider="opencode-go", turn_id="turn-capped")
-
-    # The question still offers ``max`` — the map accepts it; the owner's cap decides what runs.
-    criteria = transport.last_payload["questions"][EFFORT_QUESTION_ID]["criteria"]
-    assert "max" in criteria
-    assert result["request"]["reasoning_effort"] == "high"
-    record = router.tail(settings, limit=1)[0]
-    assert record["effort_requested"] == "max"
-    assert record["effort"] == "high"
-
-
-def test_the_replay_keeps_the_asked_level_and_the_cap_applies_to_the_wire(tmp_path, monkeypatch):
-    """The memo replay re-applies the cap to the wire, never to the recorded request."""
-    from stubs import StubResponse, StubTransport
-    from test_router import route
-
-    config = dict(GO_CONFIG, platform_overrides={"cli": {"max_effort": "high"}})
-    transport = StubTransport([StubResponse(_max_answer())])
-    router, settings = _go_router(tmp_path, monkeypatch, transport, config)
+    router, settings = _go_router(tmp_path, monkeypatch, transport, GO_CONFIG)
 
     first = route(router, provider="opencode-go", turn_id="turn-replay")
     second = route(router, provider="opencode-go", turn_id="turn-replay", api_call_count=1)
@@ -505,45 +443,11 @@ def test_the_replay_keeps_the_asked_level_and_the_cap_applies_to_the_wire(tmp_pa
     assert records[1]["replayed"] is True
     for record in records:
         assert record["effort_requested"] == "max"
-        assert record["effort"] == "high"
+        assert record["effort"] == "max"
 
 
-def test_the_rubric_knobs_reach_the_question_the_decider_sends(tmp_path, monkeypatch):
-    """The knobs are wired end to end: settings → decider → the payload on the wire."""
-    from stubs import StubResponse, StubTransport, decision_payload
-    from test_router import route
-
-    config = dict(
-        GO_CONFIG,
-        effort_criteria={"high": "our own high-effort text"},
-        effort_instructions="our own routing rule",
-    )
-    transport = StubTransport(
-        [
-            StubResponse(
-                decision_payload(
-                    model_choice="1",
-                    model_confidence=1.0,
-                    effort_choice="medium",
-                    effort_confidence=1.0,
-                    effort_probabilities={"medium": 1.0},
-                    grid_size=1,
-                )
-            )
-        ]
-    )
-    router, _ = _go_router(tmp_path, monkeypatch, transport, config)
-
-    assert route(router, provider="opencode-go", turn_id="turn-knobs") is not None
-
-    question = transport.last_payload["questions"][EFFORT_QUESTION_ID]
-    assert question["instructions"] == "our own routing rule"
-    assert question["criteria"]["high"] == "our own high-effort text"
-    assert question["criteria"]["low"] == EFFORT_CRITERIA["low"]
-
-
-def test_the_openai_compatible_cap_keeps_the_requested_level(monkeypatch):
-    """The third decider's cap follows the same audit contract: asked ``max``, applied ``high``."""
+def test_the_openai_compatible_decider_applies_the_answered_level(monkeypatch):
+    """The third decider has no ceiling of its own: the answered level is what runs."""
     from client import JevClient
     from stubs import StubResponse, StubTransport
 
@@ -556,7 +460,7 @@ def test_the_openai_compatible_cap_keeps_the_requested_level(monkeypatch):
                         {
                             "message": {
                                 "content": json.dumps(
-                                    {"model": "deepseek-v4.1-flash", "effort": "max", "confidence": 0.95}
+                                    {"model": "deepseek-v4.1-flash", "effort": "high", "confidence": 0.95}
                                 )
                             }
                         }
@@ -571,29 +475,21 @@ def test_the_openai_compatible_cap_keeps_the_requested_level(monkeypatch):
         "decider_model": "deepseek-v4.1-flash",
         "decider_api_key_env": "OPENCODE_GO_API_KEY",
         "routable_providers": ["opencode-go"],
-        "platform_overrides": {"cron": {"max_effort": "high"}},
     }
     settings = settings_for(config)
     client = JevClient(settings, transport=transport)
 
     decision, reason = client.decide(
         [{"role": "user", "content": "plan the migration"}],
-        settings.effective(settings.policy_for("cron"), provider="opencode-go"),
+        settings.effective(provider="opencode-go"),
         platform="cron",
         provider="opencode-go",
     )
 
     assert reason is None
     assert decision is not None
-    assert decision.effort_requested == "max"
+    assert decision.effort_requested == "high"
     assert decision.effort == "high"
-
-
-def test_max_effort_policy_accepts_max():
-    settings = settings_for({"platform_overrides": {"cron": {"max_effort": "max"}}})
-
-    assert settings.policy_for("cron").max_effort == "max"
-    assert settings.effective(settings.policy_for("cron")).max_effort == "max"
 
 
 def test_the_openai_compatible_schema_names_the_offered_levels(monkeypatch):
@@ -621,7 +517,7 @@ def test_the_openai_compatible_schema_names_the_offered_levels(monkeypatch):
 
     decision, reason = client.decide(
         [{"role": "user", "content": "plan the migration"}],
-        settings.effective(None),
+        settings.effective(),
         provider="opencode-go",
     )
 
@@ -642,7 +538,3 @@ def test_the_default_effort_refuses_max():
     settings = settings_for({"default_effort": "max"})
 
     assert settings.default_effort == "medium"
-    # The vocabulary still accepts it where it is a genuine choice: the operator's ceiling.
-    policy = settings_for({"platform_overrides": {"cli": {"max_effort": "max"}}}).policy_for("cli")
-    assert policy is not None
-    assert policy.max_effort == "max"

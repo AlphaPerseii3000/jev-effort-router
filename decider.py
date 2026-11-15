@@ -41,8 +41,8 @@ from .state import (
     MODEL_QUESTION_ID,
     SINGLE_MODEL_CHOICE,
     build_payload,
-    effort_criteria,
-    effort_instructions,
+    rubric_criteria,
+    rubric_instructions,
     last_user_message,
     normalise_effort_choice,
     previous_turn_signal,
@@ -53,7 +53,6 @@ logger = logging.getLogger(__name__)
 
 #: Reasons a turn was left unrouted. Stable strings — they are what the audit file records.
 REASON_DISABLED = "disabled"
-REASON_SURFACE_DISABLED = "surface_disabled"
 REASON_NO_API_KEY = "no_api_key"
 REASON_SKIPPED_PROVIDER = "provider_not_routed"
 REASON_SKIPPED_API_MODE = "api_mode_not_routed"
@@ -155,18 +154,6 @@ class Decision:
         return bool(self.fallback_reasons)
 
 
-_EFFORT_ORDER = {level: index for index, level in enumerate(EFFORT_LEVELS)}
-
-
-def _cap_effort(level: Optional[str], cap: Optional[str]) -> Optional[str]:
-    """Lower ``level`` to ``cap`` when it is strictly stronger; never raise it."""
-    if not level or not cap:
-        return level
-    if level not in _EFFORT_ORDER or cap not in _EFFORT_ORDER:
-        return level
-    return level if _EFFORT_ORDER[level] <= _EFFORT_ORDER[cap] else cap
-
-
 def _offered_levels(
     effective: EffectiveSettings, provider: str, settings: Settings
 ) -> Tuple[str, ...]:
@@ -179,13 +166,9 @@ def _offered_levels(
     return offered_levels_for_grid(effective.grid, provider, settings.effort_maps)
 
 
-def _effort_question_kwargs(levels: Sequence[str], settings: Settings) -> Dict[str, Any]:
-    """The rubric knobs ``state.build_questions`` applies, bound to the offered levels."""
-    return {
-        "levels": tuple(levels),
-        "criteria_override": settings.effort_criteria,
-        "instructions_override": settings.effort_instructions,
-    }
+def _effort_question_kwargs(levels: Sequence[str]) -> Dict[str, Any]:
+    """``state.build_questions``'s offered levels, bound once per request."""
+    return {"levels": tuple(levels)}
 
 
 def _offered_wire_effort(applied: Optional[str], levels: Sequence[str]) -> Optional[str]:
@@ -208,8 +191,6 @@ def _fallback_model(effective: EffectiveSettings) -> str:
     chosen = effective.entry_for(effective.default_model)
     if chosen is not None:
         return chosen.model_id
-    if effective.grid_from_policy and effective.grid:
-        return effective.grid[0].model_id
     return effective.default_model
 
 
@@ -331,7 +312,7 @@ class JevDecider(BaseDecider):
             # The legacy Decisions API contract always carries both questions; keeping it
             # explicit is what leaves that payload byte-identical to a one-model grid or not.
             ask_model=True,
-            **_effort_question_kwargs(levels, self._settings),
+            **_effort_question_kwargs(levels),
         )
 
         started = time.monotonic()
@@ -436,18 +417,9 @@ class JevDecider(BaseDecider):
             # A weak or unknown answer still routes: fall back to the configured default.
             requested = effective.default_effort
 
-        if requested is None and effective.max_effort:
-            # Without any effort block the cap doubles as the level (main's contract), but `max`
-            # is a ceiling, not a target: emitting it here would run the priciest level on the
-            # turn the decider failed to classify, so an explicit cap of `max` falls back to the
-            # configured default instead.
-            requested = (
-                effective.default_effort if effective.max_effort == "max" else effective.max_effort
-            )
         # ``requested`` keeps what was asked for (Jev's answer, or the configured default) and
-        # ``applied`` what the owner's cap allows: the audit has to show both, or a capped turn
-        # reads as if the stronger level had run. Only a level the question offered goes further.
-        applied = _offered_wire_effort(_cap_effort(requested, effective.max_effort), levels)
+        # only a level the question offered goes further to the wire.
+        applied = _offered_wire_effort(requested, levels)
 
         effort = resolve_effort(
             model,
@@ -547,7 +519,7 @@ class OpenAICompatibleDecider(BaseDecider):
         levels = _offered_levels(effective, provider, self._settings)
         effort_lines = [
             f"- {lvl}: {desc}"
-            for lvl, desc in effort_criteria(levels, self._settings.effort_criteria).items()
+            for lvl, desc in rubric_criteria(levels).items()
         ]
         # The schema and the rule name exactly the levels this route was offered: a level the
         # wire would clamp away must never appear in the prompt, or the model spends the answer
@@ -557,7 +529,7 @@ class OpenAICompatibleDecider(BaseDecider):
             effort_rule = f"- The effort MUST be {levels[0]}."
         else:
             effort_rule = f"- The effort MUST be {', '.join(levels[:-1])}, or {levels[-1]}."
-        effort_scope = effort_instructions(self._settings.effort_instructions)
+        effort_scope = rubric_instructions()
 
         if single_model:
             grid_lines: List[str] = []
@@ -771,10 +743,10 @@ class OpenAICompatibleDecider(BaseDecider):
         if candidate is None:
             return None, REASON_UNKNOWN_CHOICE
 
-        # What was asked for stays visible; what the cap allows is what runs — and only a level
-        # the prompt actually offered survives to the wire.
+        # What was asked for stays visible; only a level the prompt actually offered survives to
+        # the wire.
         requested: Optional[str] = candidate
-        applied = _offered_wire_effort(_cap_effort(requested, effective.max_effort), levels)
+        applied = _offered_wire_effort(requested, levels)
 
         effort = resolve_effort(
             chosen.model_id,
@@ -941,7 +913,7 @@ class JevConsoleDecider(BaseDecider):
                 # One model is not a choice: asking the model question over a single option
                 # spends the answer on a certainty, and Jev cannot express anything else.
                 ask_model=len(effective.grid) > 1,
-                **_effort_question_kwargs(levels, self._settings),
+                **_effort_question_kwargs(levels),
             )
             try:
                 response, _ = self._post_one(url, payload, headers)
@@ -1216,7 +1188,7 @@ class JevConsoleDecider(BaseDecider):
         # probability key outside it is a malformed answer, not a new option. The chosen level is
         # recorded as asked and dropped from the wire when the route never offered it.
         levels = _offered_levels(effective, provider, self._settings)
-        sent_effort_criteria = effort_criteria(levels, self._settings.effort_criteria)
+        sent_rubric_criteria = rubric_criteria(levels)
         requested: Optional[str] = None
         effort_confidence = 0.0
         effort_choice_text = ""
@@ -1274,7 +1246,7 @@ class JevConsoleDecider(BaseDecider):
                     return None, REASON_MALFORMED
                 for k, v in e_criteria.items():
                     k_str = str(k).strip().lower()
-                    if k_str not in sent_effort_criteria or str(v).strip() != sent_effort_criteria[k_str]:
+                    if k_str not in sent_rubric_criteria or str(v).strip() != sent_rubric_criteria[k_str]:
                         return None, REASON_UNKNOWN_CHOICE
 
             if "choice" not in effort_answer or effort_answer["choice"] is None:
@@ -1287,10 +1259,10 @@ class JevConsoleDecider(BaseDecider):
                 return None, REASON_LOW_CONFIDENCE
             requested = candidate
 
-        # ``requested`` is what Jev asked for and ``applied`` what the owner's cap allows; the
-        # decision carries both so the audit can tell a capped turn from an uncapped one. A level
-        # this route never offered stops here: it is recorded, never resolved onto the wire.
-        applied = _offered_wire_effort(_cap_effort(requested, effective.max_effort), levels)
+        # ``requested`` is what Jev asked for; the decision carries it beside the applied level so
+        # the audit can tell an omitted turn from an applied one. A level this route never offered
+        # stops here: it is recorded, never resolved onto the wire.
+        applied = _offered_wire_effort(requested, levels)
 
         effort = resolve_effort(
             model,

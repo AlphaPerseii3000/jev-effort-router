@@ -79,7 +79,7 @@ def test_jev_console_fixes_the_model_and_audits_it(monkeypatch):
 
     decision, reason = client.decide(
         MESSAGES,
-        settings.effective(None, provider="opencode-go"),
+        settings.effective(provider="opencode-go"),
         provider="opencode-go",
     )
 
@@ -109,7 +109,7 @@ def test_a_volunteered_model_answer_is_ignored_on_a_one_model_grid(monkeypatch):
 
     decision, reason = client.decide(
         MESSAGES,
-        settings.effective(None, provider="opencode-go"),
+        settings.effective(provider="opencode-go"),
         provider="opencode-go",
     )
 
@@ -131,7 +131,7 @@ def test_jev_console_two_model_grid_still_requires_and_reads_the_choice(monkeypa
 
     decision, reason = client.decide(
         MESSAGES,
-        settings.effective(None, provider="ollama-cloud"),
+        settings.effective(provider="ollama-cloud"),
         provider="ollama-cloud",
     )
 
@@ -159,7 +159,7 @@ def test_jev_console_two_model_grid_without_a_model_answer_is_malformed(monkeypa
 
     decision, reason = client.decide(
         MESSAGES,
-        settings.effective(None, provider="ollama-cloud"),
+        settings.effective(provider="ollama-cloud"),
         provider="ollama-cloud",
     )
 
@@ -226,7 +226,7 @@ def test_openai_compatible_one_model_grid_asks_only_for_effort(monkeypatch):
 
     decision, reason = client.decide(
         MESSAGES,
-        settings.effective(None, provider="opencode-go"),
+        settings.effective(provider="opencode-go"),
         provider="opencode-go",
     )
 
@@ -257,7 +257,7 @@ def test_openai_compatible_two_model_grid_keeps_the_model_question(monkeypatch):
 
     decision, reason = client.decide(
         MESSAGES,
-        settings.effective(None, provider="opencode-go"),
+        settings.effective(provider="opencode-go"),
         provider="opencode-go",
     )
 
@@ -280,7 +280,7 @@ def test_openai_compatible_one_model_grid_never_invents_a_model_answer(monkeypat
 
     decision, reason = client.decide(
         MESSAGES,
-        settings.effective(None, provider="opencode-go"),
+        settings.effective(provider="opencode-go"),
         provider="opencode-go",
     )
 
@@ -313,7 +313,7 @@ def test_the_legacy_jev_wire_still_asks_the_model_on_a_one_model_grid(monkeypatc
 
     decision, reason = client.decide(
         MESSAGES,
-        settings.effective(None),
+        settings.effective(),
         platform="cli",
         provider="ollama-cloud",
     )

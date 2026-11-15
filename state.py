@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .config import EFFORT_LEVELS, redact
 from .effort import DEFAULT_OFFERED_LEVELS
@@ -321,29 +321,22 @@ def build_state(
     return state
 
 
-def effort_criteria(
-    levels: Optional[Sequence[str]] = None,
-    override: Optional[Mapping[str, str]] = None,
-) -> Dict[str, str]:
+def rubric_criteria(levels: Optional[Sequence[str]] = None) -> Dict[str, str]:
     """The criteria the effort question shows, limited to the offered levels.
 
-    ``override`` is the ``effort_criteria`` knob, already validated against the vocabulary: it
-    rewrites the levels it names and the built-in text covers the rest. ``levels`` is what the
+    The built-in rubric is the only source: there is no operator override. ``levels`` is what the
     route can actually be given (see :func:`effort.offered_levels`), so a level the wire would
     clamp away is never presented as an option.
     """
     chosen = dict(EFFORT_CRITERIA)
-    if override:
-        chosen.update({level: text for level, text in override.items() if level in chosen})
     if levels is None:
         return chosen
     return {level: chosen[level] for level in levels if level in chosen}
 
 
-def effort_instructions(override: Optional[str] = None) -> str:
-    """The effort question's instructions: the knob when usable, the built-in rule otherwise."""
-    text = str(override or "").strip()
-    return text or EFFORT_INSTRUCTIONS
+def rubric_instructions() -> str:
+    """The effort question's instructions: the built-in rule."""
+    return EFFORT_INSTRUCTIONS
 
 
 def build_questions(
@@ -351,8 +344,6 @@ def build_questions(
     *,
     ask_model: Optional[bool] = None,
     levels: Optional[Sequence[str]] = None,
-    criteria_override: Optional[Mapping[str, str]] = None,
-    instructions_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The Choice questions, as the endpoint expects them.
 
@@ -375,8 +366,8 @@ def build_questions(
         }
     questions[EFFORT_QUESTION_ID] = {
         "type": "choice",
-        "instructions": effort_instructions(instructions_override),
-        "criteria": effort_criteria(offered, criteria_override),
+        "instructions": rubric_instructions(),
+        "criteria": rubric_criteria(offered),
     }
     return questions
 
@@ -391,8 +382,6 @@ def build_payload(
     provider: str = "",
     ask_model: Optional[bool] = None,
     levels: Optional[Sequence[str]] = None,
-    criteria_override: Optional[Mapping[str, str]] = None,
-    instructions_override: Optional[str] = None,
 ) -> Dict[str, Any]:
     """The complete Decisions API request body."""
     return {
@@ -407,8 +396,6 @@ def build_payload(
             grid,
             ask_model=ask_model,
             levels=levels,
-            criteria_override=criteria_override,
-            instructions_override=instructions_override,
         ),
     }
 

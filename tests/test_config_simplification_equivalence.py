@@ -116,8 +116,8 @@ def test_every_model_reaches_the_same_wire_id(provider, legacy, minimal):
     does not serve). The catalog answers in both configurations, which is exactly the equality
     that matters: same picker id in ⇒ same provider id out.
     """
-    legacy_effective = legacy.effective(None, provider)
-    minimal_effective = minimal.effective(None, provider)
+    legacy_effective = legacy.effective(provider)
+    minimal_effective = minimal.effective(provider)
 
     for entry in minimal.grid_for(provider):
         assert wire_model_for(provider, legacy_effective, entry.model_id) == wire_model_for(
@@ -128,7 +128,7 @@ def test_every_model_reaches_the_same_wire_id(provider, legacy, minimal):
 def test_the_codex_picker_alias_still_maps_to_the_served_id(legacy, minimal):
     """The parsed legacy grid carries no ``wire_id`` for ``gpt-6-luna-900k``; the catalog does."""
     for settings in (legacy, minimal):
-        effective = settings.effective(None, "openai-codex")
+        effective = settings.effective("openai-codex")
         assert (
             wire_model_for("openai-codex", effective, "gpt-6-luna-900k") == "gpt-6-luna"
         )
@@ -137,16 +137,16 @@ def test_the_codex_picker_alias_still_maps_to_the_served_id(legacy, minimal):
 @pytest.mark.parametrize("provider", PROVIDERS)
 def test_the_degraded_model_is_the_same(provider, legacy, minimal):
     assert (
-        legacy.effective(None, provider).default_model
-        == minimal.effective(None, provider).default_model
+        legacy.effective(provider).default_model
+        == minimal.effective(provider).default_model
     )
 
 
 @pytest.mark.parametrize("provider", PROVIDERS)
 def test_the_configured_default_effort_is_the_same(provider, legacy, minimal):
     assert (
-        legacy.effective(None, provider).default_effort
-        == minimal.effective(None, provider).default_effort
+        legacy.effective(provider).default_effort
+        == minimal.effective(provider).default_effort
         == "medium"
     )
 
@@ -154,9 +154,9 @@ def test_the_configured_default_effort_is_the_same(provider, legacy, minimal):
 @pytest.mark.parametrize("provider", PROVIDERS)
 def test_the_effort_question_offers_the_same_levels(provider, legacy, minimal):
     assert offered_levels_for_grid(
-        legacy.effective(None, provider).grid, provider, legacy.effort_maps
+        legacy.effective(provider).grid, provider, legacy.effort_maps
     ) == offered_levels_for_grid(
-        minimal.effective(None, provider).grid, provider, minimal.effort_maps
+        minimal.effective(provider).grid, provider, minimal.effort_maps
     )
 
 

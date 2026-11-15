@@ -174,7 +174,7 @@ def _status(router, settings: Settings, recent: int = 5, provider: Optional[str]
     key_env = settings.api_key_env_for(settings.decider)
     endpoint = settings.base_url_for(settings.decider)
     jev_model = settings.decider_model_for(settings.decider)
-    confidence_threshold = settings.confidence_threshold_for(settings.decider)
+    confidence_threshold = settings.confidence_threshold
     target_provider = (
         provider
         if provider is not None
@@ -253,7 +253,7 @@ def _route(
         if provider is not None
         else (settings.routable_providers[0] if settings.routable_providers else "")
     )
-    effective = settings.effective(None, provider=target_provider)
+    effective = settings.effective(provider=target_provider)
     decision, reason = router.client(settings).decide(
         messages, effective, provider=target_provider
     )
