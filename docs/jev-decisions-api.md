@@ -297,28 +297,37 @@ timeout, a dead credential — and the turn would otherwise keep the statically 
 Enabling it is a deliberate act with a privacy consequence, so it is never a default, never inferred
 from a key being present, and never enabled for the `jev` or `openai_compatible` deciders.
 
-### Configuration (all three required)
+### Configuration (the endpoint is the opt-in)
 
 ```yaml
 decider: jev_console
 console_jev_commandcode_base_url: https://api.commandcode.ai/provider/v1/systemone
+```
+
+`console_jev_commandcode_api_key_env` and `console_jev_commandcode_model` may be written out (both
+values below are the defaults), but they are **not** required: once the URL names the endpoint they
+complete themselves with `COMMANDCODE_API_KEY` and `typesafe/jev`, because neither is
+deployment-specific. Without the URL nothing is reached, whatever the other two say.
+
+```yaml
 console_jev_commandcode_api_key_env: COMMANDCODE_API_KEY
 console_jev_commandcode_model: typesafe/jev
 ```
 
 | Setting | Contract |
 |---|---|
-| `console_jev_commandcode_base_url` | The **complete** SystemOne endpoint. No suffix is appended: the path is the provider's contract, not this plugin's to compose. Must be `https://`, and must not carry userinfo, a query or a fragment — each of those either leaks a credential into a record or sends the decision somewhere other than the documented endpoint. An unusable value disables the fallback and is not echoed anywhere. |
-| `console_jev_commandcode_api_key_env` | The **name** of the variable holding the key. The value is read from the environment at call time (`os.environ`), never from `config.yaml`, never from `auth.json`, never from a credential pool, and never written to a log or an audit record. |
-| `console_jev_commandcode_model` | The decision model id asked on this host. CommandCode namespaces its ids, so the same Jev is `typesafe/jev` here and `typesafe/jev-1.13` on Wire 1 — they are different contracts. |
+| `console_jev_commandcode_base_url` | The **complete** SystemOne endpoint. No suffix is appended: the path is the provider's contract, not this plugin's to compose. Must be `https://`, and must not carry userinfo, a query or a fragment — each of those either leaks a credential into a record or sends the decision somewhere other than the documented endpoint. An unusable value disables the fallback and is not echoed anywhere. Empty disables the fallback silently: it is the consent, not a mistake. |
+| `console_jev_commandcode_api_key_env` | The **name** of the variable holding the key; empty defaults to `COMMANDCODE_API_KEY` once the URL is set. The value is read from the environment at call time (`os.environ`), never from `config.yaml`, never from `auth.json`, never from a credential pool, and never written to a log or an audit record. |
+| `console_jev_commandcode_model` | The decision model id asked on this host; empty defaults to `typesafe/jev` once the URL is set. CommandCode namespaces its ids, so the same Jev is `typesafe/jev` here and `typesafe/jev-1.13` on Wire 1 — they are different contracts. |
 
 State machine:
 
-* **empty trio** → disabled, and the deployment is indistinguishable from one that predates the
-  feature: same payload bytes, same number of HTTP calls, same audit shape, same status output;
-* **partial or invalid trio** → disabled. A sanitized warning names the setting at fault (never its
-  value) and *only* the fallback is switched off — the console chain keeps working;
-* **complete, valid trio** → enabled for `jev_console` only.
+* **empty URL** → disabled, and the deployment is indistinguishable from one that predates the
+  feature: same payload bytes, same number of HTTP calls, same audit shape, same status output. A
+  `model`/`api_key_env` left behind without a URL is inert and produces no warning;
+* **invalid URL** → disabled. A sanitized warning names the setting at fault (never its value) and
+  *only* the fallback is switched off — the console chain keeps working;
+* **valid URL** → enabled for `jev_console` only, with the model and key variable defaulted.
 
 ### When the fallback is consulted
 
