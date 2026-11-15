@@ -39,7 +39,6 @@ from .config import (
     ROUTED_API_MODES,
     ROUTED_PROVIDER,
     ROUTED_PROVIDER_ALIASES,
-    WIRE_STYLE_EXTRA_BODY_REASONING,
     WIRE_STYLE_OUTPUT_CONFIG,
     WIRE_STYLE_RESPONSES,
     CommandCodeFallback,
@@ -48,7 +47,6 @@ from .config import (
     api_key,
     route_catalog,
     same_provider_route,
-    split_context_variant,
     wire_style,
 )
 from .effort import offered_levels_for_grid, resolve_effort
@@ -85,16 +83,7 @@ ANTHROPIC_API_MODE = "anthropic_messages"
 ANTHROPIC_OUTPUT_CONFIG_KEY = "output_config"
 ANTHROPIC_EFFORT_KEY = "effort"
 
-#: The ``extra_body.reasoning`` style: the Claude subscription profile hands
-#: ``{"reasoning": dict(reasoning_config)}`` back from ``build_api_kwargs_extras`` and the core puts
-#: it in ``api_kwargs["extra_body"]``, so the body carries the reasoning object one level down from
-#: the kwargs. The provider then maps ``reasoning.effort`` onto ``thinking`` and
-#: ``output_config.effort`` and runs Claude Code with ``--effort``; a top-level ``reasoning_effort``
-#: is not among its allowed kwargs.
-EXTRA_BODY_KEY = "extra_body"
-REASONING_KEY = "reasoning"
 EFFORT_KEY = "effort"
-REASONING_ENABLED_KEY = "enabled"
 
 
 #: Failures a turn may remember. Both are slow and repeatable: a decider that answered below the
@@ -151,33 +140,17 @@ def wire_model_for(provider: str, effective: EffectiveSettings, model_id: str) -
     return resolved.wire_model if resolved is not None else model_id
 
 
-def wire_model_with_variant(
-    provider: str, effective: EffectiveSettings, model_id: str, suffix: str = ""
-) -> str:
-    """The wire id for a routed model, carrying the request's context-variant suffix when it had one.
-
-    The grid, the catalog and the decision all name the **bare** id; the suffix (``[1m]`` on the
-    subscription route) is the caller's statement that the turn wants the 1M window, so it is
-    re-appended instead of being left to the route's implicit upgrade. ``suffix`` is the request's
-    own suffix, which wins over one the decided/selected id happens to carry; a route that declares
-    no suffix (the native ``anthropic`` route) never has either, so its ids pass through unchanged.
-    """
-    base, own_suffix = split_context_variant(provider, model_id)
-    return wire_model_for(provider, effective, base) + (suffix or own_suffix)
-
-
-def wire_effort(payload: Any, provider: str = "", api_mode: str = "") -> Optional[str]:
+def wire_effort(payload: Any, api_mode: str = "") -> Optional[str]:
     """The reasoning level a payload carries right now, wherever its route puts it.
 
     The read side of the same table :meth:`Router._apply` writes through: the level sits at the
-    top of a ``chat_completions`` body, in ``reasoning`` on the Responses body, in
-    ``output_config`` on the Messages body and in ``extra_body.reasoning`` on the subscription
-    body. Reading it here — instead of in each caller — is what lets a divergence comparison and
-    an audit record agree with the wire.
+    top of a ``chat_completions`` body, in ``reasoning`` on the Responses body and in
+    ``output_config`` on the Messages body. Reading it here — instead of in each caller — is what
+    lets a divergence comparison and an audit record agree with the wire.
     """
     if not isinstance(payload, dict):
         return None
-    style = wire_style(provider, api_mode)
+    style = wire_style(api_mode)
     level: Any
     if style == WIRE_STYLE_RESPONSES:
         container = payload.get(RESPONSES_REASONING_KEY)
@@ -185,10 +158,6 @@ def wire_effort(payload: Any, provider: str = "", api_mode: str = "") -> Optiona
     elif style == WIRE_STYLE_OUTPUT_CONFIG:
         container = payload.get(ANTHROPIC_OUTPUT_CONFIG_KEY)
         level = container.get(ANTHROPIC_EFFORT_KEY) if isinstance(container, dict) else None
-    elif style == WIRE_STYLE_EXTRA_BODY_REASONING:
-        extra = payload.get(EXTRA_BODY_KEY)
-        reasoning = extra.get(REASONING_KEY) if isinstance(extra, dict) else None
-        level = reasoning.get(EFFORT_KEY) if isinstance(reasoning, dict) else None
     else:
         level = payload.get(EFFORT_WIRE_KEY)
     return level if isinstance(level, str) and level else None
@@ -314,14 +283,6 @@ class Router:
             return None
         effective = settings.effective(policy, provider=provider)
 
-        # -- the id every lookup uses --------------------------------------------------
-        # A context-variant suffix the route declares (``[1m]`` on the subscription route) is the
-        # caller's window choice, not part of the model's id: the grids, the catalogs and the memo
-        # are keyed by the bare id, and the write paths put the suffix back. A route that declares
-        # no suffix (the native ``anthropic`` route, where 1M comes from the beta header) is
-        # untouched here, so an unexpected ``[1m]`` there stays a ``model_not_in_grid`` skip.
-        base_model, context_suffix = split_context_variant(provider_key, model)
-
         # -- the session's own selection ----------------------------------------------
         # Read only after every gate above has run, and only when the mode and the platform opt
         # in: with ``session_selection.mode: off`` the row is never touched and this call is a
@@ -342,7 +303,7 @@ class Router:
 
         # A surface's grid is a structural cap: a configured model outside it degrades to a
         # skip that keeps that configured model on the wire, rather than being re-pinned.
-        if effective.entry_for(base_model) is None:
+        if effective.entry_for(model) is None:
             return self._fail_open(
                 settings,
                 REASON_SKIPPED_MODEL,
@@ -453,12 +414,9 @@ class Router:
                         selection=selection,
                     )
 
-                # Grid guard: the replayed model must exist in the active provider's grid. The
-                # comparison uses the bare id: a memo naming a context-variant id (``X[1m]``) is
-                # the same grid choice as ``X``, and testing the suffixed id here is exactly how a
-                # replay of such a turn would turn into a spurious ``model_not_in_grid`` skip.
-                memo_base_model, _ = split_context_variant(provider, memo.model)
-                if effective.entry_for(memo_base_model) is None:
+                # Grid guard: the replayed model must exist in the active provider's grid, compared
+                # by the same id the decision stored.
+                if effective.entry_for(memo.model) is None:
                     logger.info(
                         "jev-effort-router: memo model %r is not in grid for provider %r; failing open",
                         memo.model,
@@ -587,13 +545,10 @@ class Router:
             routed = self._apply(
                 original_request,
                 decision,
-                provider=provider,
                 api_mode=api_mode,
-                wire_model=wire_model_with_variant(
-                    provider, effective, decision.model, context_suffix
-                ),
+                wire_model=wire_model_for(provider, effective, decision.model),
             )
-            decision = self._applied_decision(decision, routed, provider=provider, api_mode=api_mode)
+            decision = self._applied_decision(decision, routed, api_mode=api_mode)
             self._record_route(
                 settings,
                 decision,
@@ -831,7 +786,6 @@ class Router:
         original_request: Dict[str, Any],
         decision: Decision,
         *,
-        provider: str = "",
         api_mode: str = "",
         wire_model: str = "",
     ) -> Dict[str, Any]:
@@ -845,7 +799,6 @@ class Router:
             original_request,
             model=wire_model or decision.model,
             effort=decision.effort,
-            provider=provider,
             api_mode=api_mode,
         )
 
@@ -855,18 +808,15 @@ class Router:
         *,
         model: str,
         effort: Optional[str],
-        provider: str = "",
         api_mode: str = "",
     ) -> Dict[str, Any]:
-        """Put ``model`` and ``effort`` on the pre-middleware payload, in the route's own shape.
+        """Put ``model`` and ``effort`` on the pre-middleware payload, in the payload's own shape.
 
-        The branch is chosen by :func:`config.wire_style`, which answers the **route's** declared
-        style first and the ``api_mode`` default second. The router therefore never tests a
-        provider id here: declaring a route in ``config.ROUTE_WIRE_STYLES`` is what puts its body in
-        the ``extra_body.reasoning`` branch, and every other route keeps the branch its payload
-        shape implies. Both callers — a decision (:meth:`_apply`) and a reconciled fail-open turn
-        (:meth:`_reconciled`) — go through this one place, so the session's selection cannot reach
-        the wire in a shape the decider's own choice would not.
+        The branch is chosen by :func:`config.wire_style`, which answers from the ``api_mode`` the
+        route speaks: the router never tests a provider id here. Both callers — a decision
+        (:meth:`_apply`) and a reconciled fail-open turn (:meth:`_reconciled`) — go through this one
+        place, so the session's selection cannot reach the wire in a shape the decider's own choice
+        would not.
 
         On the top-level style only ``reasoning_effort`` is written. ``reasoning_config`` is a
         *params-level* input that the provider profile consumes to derive that top-level field
@@ -878,18 +828,15 @@ class Router:
 
         On the ``responses`` style the field is nested instead — see
         :meth:`_apply_responses_reasoning`; on ``output_config`` inside the Messages block — see
-        :meth:`_apply_anthropic_effort`; on ``extra_body_reasoning`` one level below the kwargs — see
-        :meth:`_apply_extra_body_reasoning`.
+        :meth:`_apply_anthropic_effort`.
         """
         routed = dict(original_request)
         routed["model"] = model
-        style = wire_style(provider, api_mode)
+        style = wire_style(api_mode)
         if style == WIRE_STYLE_RESPONSES:
             return self._apply_responses_reasoning(routed, effort)
         if style == WIRE_STYLE_OUTPUT_CONFIG:
             return self._apply_anthropic_effort(routed, effort)
-        if style == WIRE_STYLE_EXTRA_BODY_REASONING:
-            return self._apply_extra_body_reasoning(routed, effort)
         if effort:
             routed[EFFORT_WIRE_KEY] = effort
         else:
@@ -950,79 +897,28 @@ class Router:
         return routed
 
     @staticmethod
-    def _apply_extra_body_reasoning(routed: Dict[str, Any], effort: Optional[str]) -> Dict[str, Any]:
-        """Rewrite ``extra_body.reasoning.effort`` on an already-built chat-completions body.
-
-        The Claude subscription profile is the author of both containers: its
-        ``build_api_kwargs_extras`` returns ``{"reasoning": dict(reasoning_config)}`` and the core
-        places that in ``api_kwargs["extra_body"]``, so by the time this middleware runs the body
-        carries ``extra_body.reasoning``. The plugin therefore writes the level **inside** an object
-        that exists and adds neither ``extra_body`` nor ``reasoning``: a route whose profile emitted
-        no ``reasoning_config`` (or a caller that stripped it) has nothing to write into, and an
-        invented ``extra_body`` is a request the provider would reject.
-
-        Everything the transport wrote survives: ``reasoning.enabled``, every other key of
-        ``reasoning`` (the provider accepts only ``enabled``/``effort`` today, but that allowlist
-        is not this plugin's to police) and every other ``extra_body`` key (``max_tokens``,
-        ``stop_sequences``, ``response_format``, ...). A ``reasoning`` object the transport
-        *disabled* (``enabled: false``) is left exactly as built — the provider turns a disable
-        into ``thinking: {type: disabled}`` or, where the family cannot disable thinking, into its
-        lowest effort; overriding the level there would contradict the session's own setting. The
-        audit reports ``effort: null`` for that turn.
-
-        An omitted level removes the ``effort`` key, so a ``null`` in the audit always means "no
-        level on the wire". A top-level ``reasoning_effort`` is never written on this route: it is
-        not in the provider's allowed kwargs.
-        """
-        extra = routed.get(EXTRA_BODY_KEY)
-        if not isinstance(extra, dict):
-            return routed
-        reasoning = extra.get(REASONING_KEY)
-        if not isinstance(reasoning, dict):
-            return routed
-        if reasoning.get(REASONING_ENABLED_KEY) is False:
-            return routed
-        updated_reasoning = dict(reasoning)
-        if effort:
-            updated_reasoning[EFFORT_KEY] = effort
-        else:
-            updated_reasoning.pop(EFFORT_KEY, None)
-        updated_extra = dict(extra)
-        updated_extra[REASONING_KEY] = updated_reasoning
-        routed[EXTRA_BODY_KEY] = updated_extra
-        return routed
-
-    @staticmethod
     def _applied_decision(
         decision: Decision,
         routed: Dict[str, Any],
         *,
-        provider: str = "",
         api_mode: str = "",
     ) -> Decision:
         """The decision as it actually reached the payload.
 
         A nested route the transport judged as taking no effort field carries no container to
         write into (no ``reasoning`` object on the Responses body, no ``output_config`` on the
-        Messages body, no ``extra_body.reasoning`` on the subscription body), and this router will
-        not invent one. The audit then reports the level as *not* sent (``effort: null``) while
-        ``effort_requested`` keeps Jev's choice — a null effort is a statement about the wire, never
-        about what the model executed. A ``reasoning`` object the transport disabled is the same
-        case: nothing was written, so nothing is claimed.
+        Messages body), and this router will not invent one. The audit then reports the level as
+        *not* sent (``effort: null``) while ``effort_requested`` keeps Jev's choice — a null effort
+        is a statement about the wire, never about what the model executed. A ``reasoning`` object
+        the transport disabled is the same case: nothing was written, so nothing is claimed.
         """
         if not decision.effort:
             return decision
-        style = wire_style(provider, api_mode)
+        style = wire_style(api_mode)
         if style == WIRE_STYLE_RESPONSES:
             container, effort_key = routed.get(RESPONSES_REASONING_KEY), EFFORT_KEY
         elif style == WIRE_STYLE_OUTPUT_CONFIG:
             container, effort_key = routed.get(ANTHROPIC_OUTPUT_CONFIG_KEY), ANTHROPIC_EFFORT_KEY
-        elif style == WIRE_STYLE_EXTRA_BODY_REASONING:
-            extra = routed.get(EXTRA_BODY_KEY)
-            container = extra.get(REASONING_KEY) if isinstance(extra, dict) else None
-            effort_key = EFFORT_KEY
-            if isinstance(container, dict) and container.get(REASONING_ENABLED_KEY) is False:
-                return replace(decision, effort=None)
         else:
             return decision
         if isinstance(container, dict) and container.get(effort_key) == decision.effort:
@@ -1062,16 +958,14 @@ class Router:
 
         Eligible means: the selection's provider is **this** request's route (identity, aliases
         included) **or** the ``session_selection.provider_map`` declares this request's provider as
-        another route the same choice is valid on; and its model — by its bare id, so a
-        ``[1m]`` variant is not a different choice — is in the route's catalog (where the route
-        pins one) and in the surface's grid. Anything else is ``selection_unmappable`` and no
-        action — a selection naming a model the route would reject turns a degraded turn into a
+        another route the same choice is valid on; and its model is in the route's catalog (where
+        the route pins one) and in the surface's grid. Anything else is ``selection_unmappable`` and
+        no action — a selection naming a model the route would reject turns a degraded turn into a
         dead one, which is the outcome this plugin exists to avoid.
 
         Identity is unconditional on purpose: the map is additive ("also valid in"), not a
-        restriction. Reading it as "only valid in" made a native ``anthropic`` pick unusable on a
-        native request and left the turn on the profile's default — half of the build race this
-        feature exists to patch.
+        restriction, and by default it is empty. Reading it as "only valid in" made a native
+        ``anthropic`` pick unusable on a native request and left the turn on the profile's default.
         """
         if selection is None:
             return None
@@ -1079,7 +973,7 @@ class Router:
         mapped = settings.session_selection.provider_for(selection.provider)
         same_route = same_provider_route(selection.provider, provider_key)
         catalog = tuple(entry.model_id for entry in (route_catalog(provider_key) or ()))
-        selection_model, _ = split_context_variant(provider_key, selection.model)
+        selection_model = selection.model
         reason = ""
         if not (same_route or mapped == provider_key):
             reason = "provider_mismatch"
@@ -1129,13 +1023,8 @@ class Router:
         record names both sides and what the plugin did about them, so a later reader can tell a
         reconciled turn from one that was only watched.
         """
-        request_effort = wire_effort(payload, provider, api_mode)
-        # The comparison is made on the bare ids: a request and a row that name the same model with
-        # and without a declared context-variant suffix agree, and reporting that as a divergence
-        # would describe a difference the wire does not have.
-        request_model, _ = split_context_variant(provider, where.model)
-        selection_model, _ = split_context_variant(provider, selection.model)
-        model_differs = bool(selection.model) and selection_model != request_model
+        request_effort = wire_effort(payload, api_mode)
+        model_differs = bool(selection.model) and selection.model != where.model
         effort_differs = (
             selection.enabled is not False
             and selection.effort is not None
@@ -1266,7 +1155,7 @@ class Router:
         keep_none: Tuple[str, ...] = ()
         if routed is not None:
             record_extra["reconciled_model"] = routed.get("model")
-            record_extra["reconciled_effort"] = wire_effort(routed, provider, api_mode)
+            record_extra["reconciled_effort"] = wire_effort(routed, api_mode)
             record_extra["selection_source"] = SELECTION_SOURCE_SESSION_ROW
             # ``null`` here is a fact — the level was omitted (route cap, or a session that asked
             # for no level) — so the key is kept rather than filtered away with the other empties.
@@ -1302,30 +1191,22 @@ class Router:
         """The request rewritten to the session's own model and effort, or ``None``.
 
         ``None`` unless the mode is ``apply`` — that is the whole difference between ``warn`` and
-        ``apply``. The model goes through :func:`wire_model_with_variant` (the transport strips
-        picker aliases before this middleware runs) and the level through :func:`resolve_effort`,
-        the same pair the decision path uses, so a level the route's family cap does not accept is
-        *omitted* from the wire rather than clamped onto a neighbour, and a surface policy's
-        ``max_effort`` still applies.
+        ``apply``. The model goes through :func:`wire_model_for` (the transport strips picker
+        aliases before this middleware runs) and the level through :func:`resolve_effort`, the same
+        pair the decision path uses, so a level the route's family cap does not accept is *omitted*
+        from the wire rather than clamped onto a neighbour, and a surface policy's ``max_effort``
+        still applies.
         """
         if not settings.session_selection.applies or selection is None:
             return None
         if not isinstance(original_request, dict):
             return None
-        # The row names a grid id, possibly carrying the route's context-variant suffix. The
-        # suffix the **request** already carried wins: the turn declared its window, and a
-        # reconcile must not shrink it. ``wire_model_with_variant`` falls back to the selection's
-        # own suffix, so a row that asked for ``[1m]`` keeps it on a request that did not.
-        _, request_suffix = split_context_variant(
-            provider, str(original_request.get("model") or "")
-        )
         return self._rewrite(
             original_request,
-            model=wire_model_with_variant(provider, effective, selection.model, request_suffix),
+            model=wire_model_for(provider, effective, selection.model),
             effort=self._selection_effort(
                 settings, selection, effective, original_request, provider=provider, api_mode=api_mode
             ),
-            provider=provider,
             api_mode=api_mode,
         )
 
@@ -1347,12 +1228,10 @@ class Router:
         session that never named one would be exactly the kind of guess an audit cannot explain.
         """
         if selection.enabled is False or selection.effort is None:
-            return wire_effort(original_request, provider, api_mode)
+            return wire_effort(original_request, api_mode)
         capped = _cap_effort(selection.effort, effective.max_effort)
-        # The effort tables are keyed by the bare id; a context-variant id is the same model.
-        base_model, _ = split_context_variant(provider, selection.model)
         return resolve_effort(
-            base_model, capped, provider=provider, effort_maps=settings.effort_maps
+            selection.model, capped, provider=provider, effort_maps=settings.effort_maps
         )
 
     def _record_session_event(
@@ -1437,14 +1316,6 @@ class Router:
             "decider": getattr(decision, "decider", settings.decider),
             "replayed": bool(replayed),
         }
-        # A turn whose configured id carried a declared context-variant suffix (``[1m]`` on the
-        # subscription route) keeps that id as ``configured_model`` and reports the bare id every
-        # grid/catalog comparison used as ``normalized_model``. Both keys are absent on every other
-        # turn, so a record for a route without suffixes keeps exactly the shape it had.
-        configured_base, configured_suffix = split_context_variant(where.provider, where.model)
-        if configured_suffix:
-            record["configured_model"] = where.model
-            record["normalized_model"] = configured_base
         secondary = settings.active_commandcode_fallback()
         if secondary.enabled:
             # Provenance of the call that produced the decision. Only a deployment that opted into
@@ -1493,12 +1364,6 @@ class Router:
             "provider": where.provider,
             "configured_model": where.model,
         }
-        # The configured id is kept verbatim; when it carried a declared context-variant suffix,
-        # ``normalized_model`` names the bare id the lookups actually used. Absent otherwise, so a
-        # skip record for a route without suffixes is unchanged.
-        configured_base, configured_suffix = split_context_variant(where.provider, where.model)
-        if configured_suffix:
-            record["normalized_model"] = configured_base
         record.update({
             key: value
             for key, value in (extra or {}).items()

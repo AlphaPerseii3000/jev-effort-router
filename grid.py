@@ -202,44 +202,6 @@ ANTHROPIC_GRID: Tuple[Entry, ...] = (
 )
 
 
-#: The generation catalog of the opt-in ``claude-subscription-directsdk-experimental`` route
-#: (Claude Pro/Max through the official Claude Code CLI; ``api_mode=chat_completions``).
-#:
-#: The ids are the **native** Claude ids, and they are the ones the provider's own pinned catalog
-#: carries: ``model_catalog.py`` → ``CONTEXT_WINDOWS`` lists ``claude-sonnet-5-5``,
-#: ``claude-haiku-5-5`` and ``claude-opus-5-5`` (and ``ALIASES`` maps ``opus``/``sonnet``/``haiku``
-#: onto them). The short aliases are deliberately **not** used as entry ids: the route is asked for
-#: the id this plugin decided, and the provider resolves an alias itself only for a name the
-#: operator typed.
-#:
-#: This route is *not* the native ``anthropic`` route: different provider profile, different auth
-#: (the subscription, through Claude Code) and a different payload — ``chat_completions``, with the
-#: level inside ``extra_body.reasoning.effort`` (``config.ROUTE_WIRE_STYLES``). The families are the
-#: same three, so the descriptions are the same measured criteria strings. The effort caps are the
-#: same per-family decision (``effort.SUBSCRIPTION_MODEL_LEVELS``: Haiku up to ``max``,
-#: Sonnet/Opus only up to ``high``).
-#:
-#: ``claude-opus-5-5`` is the route's default model (``config.ROUTE_DEFAULT_MODELS``): a turn that
-#: loses its decision keeps the planning-grade family, because this route exists to serve the
-#: planner and the reviewer.
-SUBSCRIPTION_GRID: Tuple[Entry, ...] = (
-    Entry(
-        "claude-haiku-5-5",
-        "routine and well-scoped agentic coding, quick edits, summaries, extraction, "
-        "classification and other high-volume chores",
-    ),
-    Entry(
-        "claude-sonnet-5-5",
-        "human-facing messages and writing, careful single-file or refined code changes, "
-        "code review",
-    ),
-    Entry(
-        "claude-opus-5-5",
-        "planning, orchestration, architecture, multi-step debugging and deep analysis",
-    ),
-)
-
-
 def parse_entry(raw: Any) -> Optional[Entry]:
     """Parse ``"model-id: description"`` (or a ``{model_id, description}`` mapping)."""
     if isinstance(raw, dict):
