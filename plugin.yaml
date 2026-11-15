@@ -1,5 +1,5 @@
 name: jev-effort-router
-version: 0.6.0
+version: 0.7.0
 manifest_version: 2
 api_version: 1
 description: Route user turns to the best model and reasoning effort via pluggable deciders (TypeSafe Jev or OpenAI-compatible).
@@ -26,6 +26,11 @@ config_schema:
     default: typesafe/jev-1.13
     label: Jev model
     description: Decision model id for the Jev backend. Use typesafe/jev-latest to follow the newest Jev release.
+  endpoint:
+    type: str
+    default: https://openrouter.ai/api/alpha/decisions
+    label: Jev decision endpoint
+    description: TypeSafe Jev endpoint the `jev` decider POSTs to. Only the legacy `jev` decider reads it; `jev_console` and `openai_compatible` have their own URL settings.
   confidence_threshold:
     type: float
     default: 0.5
@@ -122,7 +127,10 @@ config_schema:
     type: str
     default: "jev-1.13"
     label: OpenCode Console fallback Jev model
-    description: Fallback model for jev_console decider when primary fails (defaults to jev-1.13).
+    description: >-
+      Paid second model the jev_console chain asks when the free primary fails technically. The
+      default jev-1.13 costs money; the empty string disables that leg (it is not inert), and
+      "none"/"false"/"off"/"disabled" mean the same.
   console_api_key_env:
     type: str
     default: ""
@@ -141,15 +149,16 @@ config_schema:
     default: ""
     label: CommandCode API key env var (opt-in fallback)
     description: >-
-      Env var name holding the CommandCode key, e.g. COMMANDCODE_API_KEY. The value is never read
-      from config and never logged; empty disables the fallback.
+      Env var name holding the CommandCode key. Only read when
+      console_jev_commandcode_base_url is set; empty then defaults to COMMANDCODE_API_KEY. The
+      value is never read from config and never logged.
   console_jev_commandcode_model:
     type: str
     default: ""
     label: CommandCode decision model (opt-in fallback)
     description: >-
-      Decision model id the fallback asks, e.g. typesafe/jev. Empty disables the fallback. All
-      three console_jev_commandcode_* settings are required to enable it.
+      Decision model id the fallback asks. Only read when console_jev_commandcode_base_url is
+      set; empty then defaults to typesafe/jev.
   routable_providers:
     type: list
     default: [ollama-cloud]
@@ -159,12 +168,19 @@ config_schema:
     type: dict
     default: null
     label: Per-provider routing grids
-    description: Optional map of provider id to model grid.
+    description: >-
+      Optional operator override of a route's choice set, as a map of provider id to a list of
+      "model-id: description" lines. Leave it empty to use the route's built-in catalog (grid.py),
+      which is the single source of the model ids and their descriptions; an entry outside the
+      catalog is capped away.
   effort_maps:
     type: dict
     default: null
     label: Per-provider effort maps
-    description: Optional map of provider id to effort mapping.
+    description: >-
+      Optional operator override of a route's effort contract (accepted levels, overrides). The
+      built-in policies already declare it for every route this plugin serves; declare a map only
+      to narrow or widen one. A matched entry replaces the built-in policy wholesale.
   effort_criteria:
     type: dict
     default: null

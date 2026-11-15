@@ -135,8 +135,9 @@ def test_config_schema_matches_the_settings_the_plugin_reads(tmp_path):
 
     from config import Settings
 
-    # `endpoint` is read by load_settings but intentionally not exposed as a setting.
-    assert declared == set(Settings.__dataclass_fields__) - {"endpoint"}
+    # Every setting `load_settings` reads is documented, `endpoint` included: it is read as a
+    # setting (the legacy `jev` decider POSTs to it), so an operator has to be able to see it.
+    assert declared == set(Settings.__dataclass_fields__)
 
 
 def test_status_tool_reports_the_grid_and_the_audit(plugin, tmp_path, monkeypatch):

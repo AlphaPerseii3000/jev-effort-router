@@ -156,6 +156,7 @@ form generated from `plugin.yaml`.
 | `decider_api_key_env` | `""` | Env var name storing the API key for `openai_compatible` decider. |
 | `routable_providers` | `["ollama-cloud"]` | Allowlist of provider IDs that the router is permitted to rewrite. |
 | `jev_model` | `typesafe/jev-1.13` | Decision model for `jev` backend. `typesafe/jev-latest` follows the newest release. |
+| `endpoint` | `https://openrouter.ai/api/alpha/decisions` | TypeSafe Jev endpoint. Only the legacy `jev` decider reads it. |
 | `confidence_threshold` | `0.5` | Below this, the turn keeps the configured model and effort. |
 | `confidence_threshold_per_decider` | `null` | Optional map of decider backend to confidence threshold (e.g. `{jev: 0.5, openai_compatible: 0.6}`). |
 | `timeout_s` | `2.0` | Budget for the decision call. Any timeout leaves the request untouched. |
@@ -167,12 +168,46 @@ form generated from `plugin.yaml`.
 | `log_skips` | `true` | Record why a turn was left unrouted. |
 | `include_user_message_in_audit` | `false` | Off keeps conversation content out of the audit. |
 | `grid` | `null` | Optional `["model-id: description", ...]` replacing the default grid. |
-| `grids` | `null` | Optional map of provider ID to its own routing grid. |
-| `effort_maps` | `null` | Optional map of provider ID to model effort configurations. The accepted levels of that entry decide which levels the effort question may offer. |
+| `grids` | `null` | Optional operator override of a route's choice set. Empty uses the route's built-in catalog (`grid.py`), which is the single source of the model ids and their descriptions. |
+| `effort_maps` | `null` | Optional operator override of a route's effort contract (`accepted` levels, `overrides`). Every route ships a built-in policy that already declares its accepted levels *and* which levels the effort question offers; declare a map only to narrow or widen one. |
 | `effort_criteria` | `null` | Optional map of effort level (`low`/`medium`/`high`/`max`) to the text the effort question shows. Partial maps override only the levels they name; an unknown level or empty text discards the whole knob. |
 | `effort_instructions` | `""` | Optional override of the effort question's instructions. Empty keeps the built-in rule: pick the lowest level that covers the work; raise it for uncertainty, risk or irreversibility — never for size. |
 | `platform_overrides` | `null` | Optional map of platform to settings overrides (`enabled`, `grid`, `confidence_threshold`, `max_effort`). |
 | `session_selection` | `null` | Optional reconciliation of the webui session's own model/effort pick on a fail-open turn: `mode` (`off`/`warn`/`apply`), `platforms` and `provider_map`. Defaults to `off`, which never reads the session row. |
+
+### Minimal profile block
+
+Nothing the code already knows has to be repeated in a profile. With `decider: jev_console` the
+route catalogs come from `grid.py` and the effort contracts from `effort.py`, so the whole
+`plugins.entries.jev-effort-router` block is nine lines:
+
+```yaml
+plugins:
+  entries:
+    jev-effort-router:
+      settings:
+        decider: jev_console
+        console_api_key_env: OPENCODE_GO_API_KEY
+        console_jev_fallback_model: ''
+        console_jev_commandcode_base_url: https://api.commandcode.ai/provider/v1/systemone
+        timeout_s: 3.0
+        routable_providers: [opencode-go, commandcode, openai-codex, anthropic]
+        session_selection: {mode: apply}
+```
+
+Each remaining line is an operator choice, not a default worth publishing: the backend (`decider`),
+the credential (`console_api_key_env`), the cost guard (`console_jev_fallback_model: ''` turns the
+paid `jev-1.13` leg **off**; the code default is `jev-1.13`), the privacy opt-in for the
+non-ZDR CommandCode upstream (`console_jev_commandcode_base_url`), the decision budget
+(`timeout_s`), the routes this deployment may touch (`routable_providers`) and the webui
+reconciliation mode (`session_selection`). `platforms` defaults to `[webui]`.
+
+`console_jev_commandcode_model` and `console_jev_commandcode_api_key_env` do **not** need to be
+written: once the endpoint is declared they default to `typesafe/jev` and `COMMANDCODE_API_KEY`.
+An empty `console_jev_commandcode_base_url` disables the fallback silently — the URL is the opt-in.
+
+`tests/test_config_simplification_equivalence.py` proves this block routes exactly like the
+long one, provider by provider and level by level.
 
 ### OpenCode & Pluggable Decider Configuration
 
@@ -400,7 +435,9 @@ policy, and its declared set is matched exactly — no nearest-weaker clamp, bec
 table would answer a level the route never declared. `opencode-go` and `commandcode` send the level as
 `reasoning_effort` in the same vocabulary the Hermes core drives on those wires (`low`, `medium`, `high`,
 `max`, with `xhigh` mapped onto `max`); on `commandcode` it is the top-level field, so it lands beside the
-`extra_body.thinking` toggle the provider profile derives rather than replacing it. `opencode-console`
+`extra_body.thinking` toggle the provider profile derives rather than replacing it. The question offers
+those four levels by default — each built-in policy declares its own `offered` set — so `effort_maps` is
+only needed to narrow or widen a route, never to make `max` reachable. `opencode-console`
 omits the plugin's own field for the reasons stated in [`docs/routing-grid.md`](docs/routing-grid.md).
 
 `openai-codex` is the exception on both axes. Its field is **`reasoning.effort`**, nested in the Responses
