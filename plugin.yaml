@@ -1,12 +1,12 @@
 name: jev-effort-router
-version: 0.7.0
+version: 0.8.0
 manifest_version: 2
 api_version: 1
 description: Route user turns to the best model and reasoning effort via pluggable deciders (TypeSafe Jev or OpenAI-compatible).
 author: AlphaPerseii3000 (forked by RVerdiF)
 license: MIT
 homepage: https://github.com/RVerdiF/jev-effort-router
-tags: [routing, models, reasoning, ollama-cloud, decisions, opencode, anthropic, claude-subscription]
+tags: [routing, models, reasoning, ollama-cloud, decisions, opencode, anthropic]
 provides_middleware:
   - llm_request
 provides_hooks:
@@ -91,7 +91,7 @@ config_schema:
     type: dict
     default: null
     label: Session selection reconciliation
-    description: 'Optional map with mode (off|warn|apply, default off), platforms (default [webui]) and provider_map (default anthropic -> claude-subscription-directsdk-experimental). With off the session row is never read; warn records a divergence; apply also reconciles a fail-open turn to the session''s own model and effort.'
+    description: 'Optional map with mode (off|warn|apply, default off), platforms (default [webui]) and provider_map (default {}, identity only: a selection is eligible on its own route and an entry here only adds a second one). With off the session row is never read; warn records a divergence; apply also reconciles a fail-open turn to the session''s own model and effort.'
   decider:
     type: str
     default: jev

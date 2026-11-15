@@ -86,12 +86,10 @@ reasoning and generation in the main model — it only steers.
   enforces its own much shorter budget (default 2.0 s) and returns `None` on any error.
 - The chosen model must exist in the active provider's catalog (if a catalog is available); a model id outside the
   configured grid is rejected and treated as low confidence.
-- A context-window variant suffix a route declares (`[1m]` on
-  `claude-subscription-directsdk-experimental`) is normalised to the bare id for every grid, catalog,
-  memo and session-selection comparison and re-appended to the routed `model`; the audit keeps
-  `configured_model` and adds `normalized_model`. A route that declares none — the native `anthropic`
-  route, whose 1M window is the `context-1m-2025-08-07` beta header — is unaffected, and an
-  unexpected `[1m]` there remains a `model_not_in_grid` skip.
+- Model ids are sent exactly as the route's catalog declares them: there is no context-window variant to
+  normalise. The route that declared one (`[1m]`, on the subscription route) was removed in 0.8.0, and the
+  native `anthropic` route requests its 1M window with the `context-1m-2025-08-07` beta header instead of
+  the id, so an unexpected `[1m]` there remains a `model_not_in_grid` skip.
 - The option list sent to Jev stays short. A longer Choice list measurably dilutes decision quality, so
   the grid is the six benchmarked models and grows only on evidence.
 - Routing interval: one route per user turn by default (`route_per_turn: true`), where the decision is taken
