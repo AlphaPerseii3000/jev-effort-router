@@ -474,7 +474,7 @@ class Router:
                 # rewriting the request into the value that was actually applied.
                 decision = _decision_from_memo(memo, effort=re_effort)
             else:
-                fetched, skip_reason = self._decide(settings, effective, request, where)
+                fetched, skip_reason, from_decider = self._decide(settings, effective, request, where)
                 if fetched is None:
                     return self._fail_open(
                         settings,
@@ -485,6 +485,7 @@ class Router:
                         api_mode=api_mode,
                         original_request=original_request,
                         selection=selection,
+                        decider_failed=from_decider,
                     )
                 decision = fetched
                 # A decision naming a model the provider does not have is worse than no decision:
@@ -710,18 +711,23 @@ class Router:
 
     def _decide(
         self, settings: Settings, effective: EffectiveSettings, request: Dict[str, Any], where: "_Where"
-    ) -> Tuple[Optional[Decision], Optional[str]]:
+    ) -> Tuple[Optional[Decision], Optional[str], bool]:
         """Ask the decider for one decision, and say why when it could not be had.
 
-        Returns ``(decision, None)`` on success and ``(None, reason)`` otherwise. The reason is
-        *returned* rather than recorded here because the caller owns the fail-open response: whether
-        a failed decision leaves the request untouched or reconciles it with the session's own
-        selection is decided in one place (:meth:`_fail_open`), and a skip recorded here could not
-        carry what was actually sent.
+        Returns ``(decision, None, False)`` on success and ``(None, reason, from_decider)``
+        otherwise. The reason is *returned* rather than recorded here because the caller owns the
+        fail-open response: whether a failed decision leaves the request untouched or reconciles it
+        with the session's own selection is decided in one place (:meth:`_fail_open`), and a skip
+        recorded here could not carry what was actually sent.
+
+        ``from_decider`` is ``True`` only when the decider itself answered "no decision" — the one
+        path where the quota breaker may stand in for the skip record. A gate that refuses before
+        the client is asked (``no_user_message``) and an exception around the call both leave it
+        ``False``, because neither has anything to do with a spent quota.
         """
         messages = conversation_messages(request)
         if not messages or not last_user_message(messages).strip():
-            return None, REASON_SKIPPED_NO_MESSAGE
+            return None, REASON_SKIPPED_NO_MESSAGE, False
 
         try:
             decision, reason = self.client(settings).decide(
@@ -732,17 +738,25 @@ class Router:
             )
         except Exception as exc:  # noqa: BLE001 - belt and braces around the client
             logger.warning("jev-effort-router: decision call failed (%s); leaving request untouched", exc)
-            return None, REASON_EXCEPTION
+            return None, REASON_EXCEPTION, False
 
         if decision is None:
             if reason == REASON_NO_API_KEY:
                 key_env = settings.api_key_env_for(settings.decider)
                 logger.info("jev-effort-router: %s is not set; turns keep the configured model", key_env)
             self._remember_failure(settings, effective, where, reason or REASON_EXCEPTION)
-            return None, reason or REASON_EXCEPTION
-        return decision, None
+            return None, reason or REASON_EXCEPTION, True
+        return decision, None, False
 
-    def _record_quota_window(self, settings: Settings, where: "_Where", *, reason: str) -> bool:
+    def _record_quota_window(
+        self,
+        settings: Settings,
+        where: "_Where",
+        *,
+        reason: str,
+        extra: Optional[Dict[str, Any]] = None,
+        keep_none: Tuple[str, ...] = (),
+    ) -> bool:
         """Write the single ``decider_unavailable_quota`` line of an open breaker window.
 
         Returns True when the caller must *not* write its ordinary skip record. Two cases:
@@ -753,6 +767,14 @@ class Router:
           line per request is exactly the log flood this breaker exists to stop.
 
         ``False`` means no window is open, so the caller records the reason as usual.
+
+        Only a failure of ``client.decide`` may call this: the state is per decider and lasts the
+        whole TTL, so folding an unrelated skip into this line would hide it.
+
+        ``extra`` and ``keep_none`` are the caller's own skip detail — including what a reconciled
+        turn actually sent (``reconciled_model``/``reconciled_effort``/``selection_source``). The
+        window line replaces the skip, so it has to carry that detail or the audit would lose the
+        only record of a turn that *was* rewritten from the session row.
         """
         breaker = self.breaker_state(settings) or {}
         window = breaker.get("window_id")
@@ -773,15 +795,20 @@ class Router:
             breaker.get("opened_at"),
             breaker.get("consecutive_429"),
         )
+        window_extra = dict(extra or {})
+        window_extra.update(
+            {
+                "audit_detail": "decider unavailable (quota)",
+                "upstream_reason": reason,
+                "quota_breaker": breaker,
+            }
+        )
         self._record_skip(
             settings,
             REASON_DECIDER_UNAVAILABLE,
             where,
-            extra={
-                "audit_detail": "decider unavailable (quota)",
-                "upstream_reason": reason,
-                "quota_breaker": breaker,
-            },
+            extra=window_extra,
+            keep_none=keep_none,
         )
         return True
 
@@ -1169,6 +1196,7 @@ class Router:
         original_request: Any = None,
         selection: Optional[Selection] = None,
         extra: Optional[Dict[str, Any]] = None,
+        decider_failed: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """The single exit for every **post-gate** fail-open of a turn.
 
@@ -1181,6 +1209,14 @@ class Router:
 
         The answer is the middleware's ``{"request": ...}`` shape when a rewrite happened, and
         ``None`` otherwise — byte for byte what the router returned before this feature existed.
+
+        ``decider_failed`` says this exit was reached because ``client.decide`` itself did not
+        produce a decision — not because a *gate* below the decider refused. Only that path may be
+        folded into the quota breaker's single window line: the breaker is per decider and stays
+        open for its whole TTL, and a skip that has nothing to do with quota (``model_not_in_grid``,
+        ``low_confidence``, ``model_not_in_provider_catalog``, ``no_user_message``, a replayed
+        marker, an unexpected exception) must keep its own reason in the audit while the window is
+        open.
         """
         routed: Optional[Dict[str, Any]] = None
         if selection is not None:
@@ -1217,8 +1253,16 @@ class Router:
                 record_extra["reconciled_effort"],
             )
 
-        if not self._record_quota_window(settings, where, reason=reason):
+        suppressed = False
+        if decider_failed:
+            # Only a decider failure may be folded into the breaker's single window line. Any other
+            # skip keeps its own reason even while the window is open.
+            suppressed = self._record_quota_window(
+                settings, where, reason=reason, extra=record_extra, keep_none=keep_none
+            )
+        if not suppressed:
             self._record_skip(settings, reason, where, extra=record_extra, keep_none=keep_none)
+
         if routed is None:
             return None
         # Same shape a routed turn returns: ``reason`` names the model that went on the wire, so a

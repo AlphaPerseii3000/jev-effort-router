@@ -16,13 +16,22 @@ lines in four profiles on 06/11/2026. These tests pin the five contracts of the 
 from __future__ import annotations
 
 import json
+import sqlite3
 
 import pytest
 
+import selection
 from client import JevClient
 from config import load_settings
-from decider import REASON_DECIDER_UNAVAILABLE, REASON_UPSTREAM_ERROR, QuotaBreaker
-from router import Router
+from decider import (
+    REASON_DECIDER_UNAVAILABLE,
+    REASON_SKIPPED_MODEL,
+    REASON_SKIPPED_NO_MESSAGE,
+    REASON_UPSTREAM_ERROR,
+    QuotaBreaker,
+)
+from router import Router, wire_effort
+from selection import SELECTION_SOURCE_SESSION_ROW
 from stubs import StubResponse, StubState, StubTransport, decision_payload, ollama_request
 from tools import _status
 
@@ -96,15 +105,15 @@ def build_router(tmp_path, transport, config=None):
     return router, holder
 
 
-def route(router, *, turn: str):
-    request = ollama_request()
+def route(router, *, turn: str, request=None, model: str = "deepseek-v4.1-flash", platform: str = "cli"):
+    request = dict(request if request is not None else ollama_request(model=model))
     return router.on_llm_request(
         request,
         dict(request),
         turn_id=turn,
         session_id="session-1",
-        platform="cli",
-        model="deepseek-v4.1-flash",
+        platform=platform,
+        model=model,
         provider=PROVIDER,
         base_url="https://ollama.com/v1",
         api_mode="chat_completions",
@@ -115,6 +124,40 @@ def route(router, *, turn: str):
 
 def records(router, holder):
     return router.tail(holder["settings"], limit=200)
+
+
+def write_selection_row(
+    home,
+    provider: str,
+    *,
+    session_id: str = "session-1",
+    model: str = "deepseek-v4.1-flash",
+) -> None:
+    """The session row the gateway writes: the model/effort the operator picked in the webui."""
+    connection = sqlite3.connect(str(home / "state.db"))
+    try:
+        connection.execute(
+            "CREATE TABLE IF NOT EXISTS sessions ("
+            "id TEXT PRIMARY KEY, source TEXT, model TEXT, model_config TEXT)"
+        )
+        connection.execute(
+            "INSERT OR REPLACE INTO sessions (id, source, model, model_config) VALUES (?, ?, ?, ?)",
+            (
+                session_id,
+                "webui",
+                model,
+                json.dumps({"model": model, "provider": provider}),
+            ),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def reconciled(result) -> tuple:
+    """``(model, wire_effort)`` of a rewritten request — what actually went on the wire."""
+    request = result["request"]
+    return request.get("model"), wire_effort(request, "chat_completions")
 
 
 def breaker_of(client):
@@ -192,6 +235,97 @@ def test_exactly_one_audit_line_per_open_window(tmp_path):
     # The two failed attempts that did not open the window keep their own honest reason.
     upstream = [r for r in records(router, holder) if r.get("reason") == REASON_UPSTREAM_ERROR]
     assert len(upstream) == 2
+
+
+def test_a_skip_that_does_not_come_from_the_decider_keeps_its_own_reason(tmp_path):
+    """The breaker is per decider and lasts its whole TTL: a gate's skip must survive it.
+
+    ``model_not_in_grid`` is decided *before* the client is asked — it has nothing to do with a
+    spent quota. Folding it into the window line would either hide the skip or relabel it
+    ``decider_unavailable_quota``, both of which make the audit say something that did not happen.
+    """
+    transport = StubTransport([http(429) for _ in range(6)])
+    router, holder = build_router(tmp_path, transport)
+
+    # Three 429s open the window through the only path that may use it.
+    for index in range(4):
+        assert route(router, turn=f"turn-{index}") is None
+    assert state_of(router.client(holder["settings"]))["state"] == "open"
+    assert transport.call_count == 3
+
+    # A configured model outside the surface's grid, with the window still open.
+    assert route(router, turn="turn-4", model="model-outside-any-grid") is None
+
+    reasons = [r.get("reason") for r in records(router, holder)]
+    assert reasons.count(REASON_DECIDER_UNAVAILABLE) == 1, "still one line for the window"
+    assert REASON_SKIPPED_MODEL in reasons, "the grid skip is never swallowed by the breaker"
+    grid_skip = [r for r in records(router, holder) if r.get("reason") == REASON_SKIPPED_MODEL][-1]
+    assert "quota_breaker" not in grid_skip and "upstream_reason" not in grid_skip
+    # And the gate skip asked no host: the window kept the endpoint closed.
+    assert transport.call_count == 3
+
+
+def test_a_refusal_before_the_client_is_asked_keeps_its_own_reason(tmp_path):
+    """``no_user_message`` is raised inside ``_decide``, but before ``client.decide`` runs."""
+    transport = StubTransport([http(429) for _ in range(6)])
+    router, holder = build_router(tmp_path, transport)
+
+    for index in range(4):
+        route(router, turn=f"turn-{index}")
+    assert transport.call_count == 3
+
+    request = ollama_request(messages=[{"role": "assistant", "content": "nothing to route"}])
+    assert route(router, turn="turn-4", request=request) is None
+
+    reasons = [r.get("reason") for r in records(router, holder)]
+    assert reasons.count(REASON_DECIDER_UNAVAILABLE) == 1
+    assert REASON_SKIPPED_NO_MESSAGE in reasons
+    assert transport.call_count == 3
+
+
+def test_the_window_line_carries_what_a_reconciled_turn_sent(tmp_path, monkeypatch):
+    """A reconciled turn is rewritten on the wire; the audit must still say so.
+
+    The window's single line replaces that turn's skip, so it has to carry the reconciliation
+    detail (``reconciled_model``/``reconciled_effort``/``selection_source``) — otherwise the only
+    record of a turn that *was* rewritten from the session row disappears. Requests inside the
+    same open window are reconciled too and deliberately write nothing (one line per window).
+    """
+    home = tmp_path / "profile"
+    home.mkdir()
+    monkeypatch.setattr(selection, "_context_home", lambda: home)
+    write_selection_row(home, PROVIDER)
+
+    transport = StubTransport([http(429) for _ in range(8)])
+    router, holder = build_router(
+        tmp_path,
+        transport,
+        quota_config(session_selection={"mode": "apply"}),
+    )
+
+    routed_turns = []
+    for index in range(5):
+        routed_turns.append(route(router, turn=f"turn-{index}", platform="webui"))
+
+    # Every turn of the window rewrote the request to the session's row.
+    assert all(result is not None for result in routed_turns)
+    for result in routed_turns:
+        wire_model, wire_effort = reconciled(result)
+        assert wire_model == "deepseek-v4.1-flash"
+        assert wire_effort is None, "the console route declares no effort field"
+
+    windows = [r for r in records(router, holder) if r.get("reason") == REASON_DECIDER_UNAVAILABLE]
+    assert len(windows) == 1
+    line = windows[0]
+    assert line["upstream_reason"] == REASON_UPSTREAM_ERROR
+    assert line["reconciled_model"] == "deepseek-v4.1-flash"
+    assert "reconciled_effort" in line and line["reconciled_effort"] is None
+    assert line["selection_source"] == SELECTION_SOURCE_SESSION_ROW
+
+    # The two 429s that did not open the window carry the same detail, with their own reason.
+    upstream = [r for r in records(router, holder) if r.get("reason") == REASON_UPSTREAM_ERROR]
+    assert len(upstream) == 2
+    assert all(record["reconciled_model"] == "deepseek-v4.1-flash" for record in upstream)
 
 
 # -- 3. TTL expiry closes the breaker ---------------------------------------------------
