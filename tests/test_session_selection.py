@@ -522,6 +522,47 @@ def test_a_selection_for_another_provider_is_unmappable_and_changes_nothing(prof
     assert "reconciled_model" not in last_skip(router, settings)
 
 
+def test_a_declared_provider_map_reconciles_a_selection_for_another_provider(profile, tmp_path):
+    """T6a' — ``provider_map`` is opt-in translation, so a declared pair is load-bearing.
+
+    ``openai-codex`` is neither ``anthropic`` nor an alias of it: identity alone answers
+    ``provider_mismatch`` and the row is discarded. The map declares the pair, the model is in the
+    route's catalog and in the surface's grid, and ``apply`` reconciles the fail-open turn onto it
+    — model and level both on the wire.
+    """
+    write_row(
+        profile,
+        {
+            "model": HAIKU,
+            "provider": "openai-codex",
+            "reasoning_config": {"enabled": True, "effort": "high"},
+        },
+    )
+    transport = low_confidence_transport()
+    config = _config("apply")
+    config["session_selection"] = {
+        "mode": "apply",
+        "provider_map": {"openai-codex": NATIVE},
+    }
+    router, settings = build(tmp_path, transport, config=config)
+
+    result = call(router, anthropic_request(model=SONNET, effort="low"))
+
+    assert result is not None
+    assert events(router, settings, "selection_unmappable") == []
+    routed = result["request"]
+    assert routed["model"] == HAIKU
+    assert routed["output_config"] == {"effort": "high"}
+    assert wire_level(routed) == "high"
+    skip = last_skip(router, settings)
+    assert skip["reconciled_model"] == HAIKU
+    assert skip["reconciled_effort"] == "high"
+    divergence = events(router, settings, "selection_divergence")[-1]
+    assert divergence["session_provider"] == "openai-codex"
+    assert divergence["mapped_provider"] == NATIVE
+    assert divergence["action"] == "reconcile_on_fail_open"
+
+
 def test_a_model_outside_the_routes_catalog_is_unmappable(profile, tmp_path):
     """T6b — the route pins its own catalog; a model it does not serve is never put on the wire."""
     write_row(profile, {"model": "claude-sonnet-4-0", "provider": NATIVE, "reasoning_config": {"effort": "medium"}})
