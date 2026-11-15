@@ -157,11 +157,10 @@ form generated from `plugin.yaml`.
 | `routable_providers` | `["ollama-cloud"]` | Allowlist of provider IDs that the router is permitted to rewrite. |
 | `jev_model` | `typesafe/jev-1.13` | Decision model for `jev` backend. `typesafe/jev-latest` follows the newest release. |
 | `endpoint` | `https://openrouter.ai/api/alpha/decisions` | TypeSafe Jev endpoint. Only the legacy `jev` decider reads it. |
-| `confidence_threshold` | `0.5` | Below this, the turn keeps the configured model and effort. |
-| `confidence_threshold_per_decider` | `null` | Optional map of decider backend to confidence threshold (e.g. `{jev: 0.5, openai_compatible: 0.6}`). |
+| `confidence_threshold` | `0.5` | Below this, the turn keeps the configured model and effort. One threshold for the whole deployment, whichever decider answers. |
 | `timeout_s` | `2.0` | Budget for the decision call. Any timeout leaves the request untouched. |
 | `default_model` | `deepseek-v4.1-flash` | Model used when the decision is below threshold. |
-| `default_effort` | `medium` | Effort used when the decision is below threshold. `low`/`medium`/`high` only: `max` is a ceiling for `max_effort`, never the fallback of a degraded turn. |
+| `default_effort` | `medium` | Effort used when the decision is below threshold. `low`/`medium`/`high` only: `max` is a vocabulary level, never the fallback of a degraded turn. |
 | `context_turns` | `4` | Preceding turns sent to the decider as recent context. |
 | `route_per_turn` | `true` | Off routes once per session instead of once per user turn. |
 | `audit_enabled` | `true` | Append one JSONL record per turn under the plugin data directory. |
@@ -169,10 +168,7 @@ form generated from `plugin.yaml`.
 | `include_user_message_in_audit` | `false` | Off keeps conversation content out of the audit. |
 | `grid` | `null` | Optional `["model-id: description", ...]` replacing the default grid. |
 | `grids` | `null` | Optional operator override of a route's choice set. Empty uses the route's built-in catalog (`grid.py`), which is the single source of the model ids and their descriptions. |
-| `effort_maps` | `null` | Optional operator override of a route's effort contract (`accepted` levels, `overrides`). Every route ships a built-in policy that already declares its accepted levels *and* which levels the effort question offers; declare a map only to narrow or widen one. |
-| `effort_criteria` | `null` | Optional map of effort level (`low`/`medium`/`high`/`max`) to the text the effort question shows. Partial maps override only the levels they name; an unknown level or empty text discards the whole knob. |
-| `effort_instructions` | `""` | Optional override of the effort question's instructions. Empty keeps the built-in rule: pick the lowest level that covers the work; raise it for uncertainty, risk or irreversibility — never for size. |
-| `platform_overrides` | `null` | Optional map of platform to settings overrides (`enabled`, `grid`, `confidence_threshold`, `max_effort`). |
+| `effort_maps` | `null` | Optional operator override of a route's effort contract (`accepted` levels, `overrides`). Every route ships a built-in policy that already declares its accepted levels *and* which levels the effort question offers; declare a map only to narrow or widen one. The effort question's own text (the four rungs and the rule) is built into `state.py` and is not configurable. |
 | `session_selection` | `null` | Optional reconciliation of the webui session's own model/effort pick on a fail-open turn: `mode` (`off`/`warn`/`apply`), `platforms` and `provider_map`. Defaults to `off`, which never reads the session row. |
 
 ### Minimal profile block
@@ -258,39 +254,7 @@ plugins:
               - "claude-opus-5-5: planning, orchestration, architecture, multi-step debugging and deep analysis"
   ```
   Its catalog (`ANTHROPIC_GRID`) carries one id per family, copied from the provider's own model list (the Hermes cache at `<HERMES_HOME>/provider_models_cache.json` → `anthropic`), and the effort caps are per family: `low`/`medium`/`high` on Sonnet and Opus, plus `max` on Haiku. `claude-sonnet-5-5` is the route's default model, i.e. what a degraded turn keeps. The level is written to `output_config.effort` inside the `output_config` the transport already built — never to a top-level `reasoning_effort`, which is not a Messages field, and never by adding the container itself.
-- **Effort verification**: Reasoning effort levels are never guessed. Each opt-in route declares its own contract in `effort.py`: `opencode-go` and `commandcode` both send the decided level as a top-level `reasoning_effort` (`low`/`medium`/`high`/`max`, with `xhigh` mapped onto `max` by the same declared override the Hermes core uses, probe-confirmed on 2026-10-20 against `POST https://opencode.ai/zen/go/v1/chat/completions` and `POST https://api.commandcode.ai/provider/v1/chat/completions` respectively), while `opencode-console` keeps omitting the plugin's own field. On `commandcode` that level rides beside the `extra_body.thinking` toggle the provider profile derives, never instead of it. A level outside a route's declared set (`minimal`, `none`, an unknown string) is omitted rather than clamped, and an operator `effort_maps` entry still overrides the built-in policy. That override is the custom path, not a merge: a matched model entry **replaces** the built-in policy's vocabulary, level for level — declare everything the route should accept, including any `xhigh → max` mapping, because nothing is inherited from the built-in policy. Add an entry only when deliberately narrowing a route; for `commandcode` the reference profile carries none. The entry also decides what the effort question may ask for: `max` is offered only where the route declares it — the operator's `effort_maps` entry, or (on `anthropic`) the route's own per-family cap, which is Haiku's `max` and nobody else's. `max_effort` in a platform policy accepts `max` and remains the operator's ceiling on what actually runs.
-
-### Per-surface routing policy (`platform_overrides`)
-
-You can specify a routing policy for a specific surface — such as `cron`, `telegram`, or `cli` — without altering global behavior for any other surface.
-
-Each platform key in the map accepts overrides evaluated in precedence order:
-
-1. `enabled`: When set to `false`, turns on this platform bypass routing entirely, leaving provider requests untouched and recording a skip entry (`surface_disabled`).
-2. `grid`: A restricted subset of the routing grid (or list of `"model-id: description"` pairs). Acts as a structural cap: Jev can only choose among these models, and fallback stays inside this surface grid.
-3. `confidence_threshold`: Surface-specific confidence cutoff.
-4. `max_effort`: Ceiling on reasoning effort emitted by the router (`low`, `medium`, `high`, `max`), applied to what goes on the wire — `effort_requested` still records the level that was asked for.
-
-Any surface not listed, or if `platform_overrides` is absent/`null`, uses the global configuration unchanged.
-
-#### Example
-
-In your Hermes configuration:
-
-```yaml
-plugins:
-  entries:
-    jev-effort-router:
-      settings:
-        platform_overrides:
-          cron:
-            max_effort: medium
-            grid:
-              - "deepseek-v4.1-flash: general work"
-              - "glm-5.3-flash: cost-effective reasoning"
-          telegram:
-            enabled: false
-```
+- **Effort verification**: Reasoning effort levels are never guessed. Each opt-in route declares its own contract in `effort.py`: `opencode-go` and `commandcode` both send the decided level as a top-level `reasoning_effort` (`low`/`medium`/`high`/`max`, with `xhigh` mapped onto `max` by the same declared override the Hermes core uses, probe-confirmed on 2026-10-20 against `POST https://opencode.ai/zen/go/v1/chat/completions` and `POST https://api.commandcode.ai/provider/v1/chat/completions` respectively), while `opencode-console` keeps omitting the plugin's own field. On `commandcode` that level rides beside the `extra_body.thinking` toggle the provider profile derives, never instead of it. A level outside a route's declared set (`minimal`, `none`, an unknown string) is omitted rather than clamped, and an operator `effort_maps` entry still overrides the built-in policy. That override is the custom path, not a merge: a matched model entry **replaces** the built-in policy's vocabulary, level for level — declare everything the route should accept, including any `xhigh → max` mapping, because nothing is inherited from the built-in policy. Add an entry only when deliberately narrowing a route; for `commandcode` the reference profile carries none. The entry also decides what the effort question may ask for: `max` is offered only where the route declares it — the operator's `effort_maps` entry, or (on `anthropic`) the route's own per-family cap, which is Haiku's `max` and nobody else's.
 
 ### Session selection reconciliation (`session_selection`)
 
@@ -327,7 +291,7 @@ plugins:
   that translation.
 - Nothing is reconciled when the router may not override the request: `enabled: false`, a
   `provider_not_routed` (`selection_native_provider` is recorded instead — out of the build race the
-  plugin can only report the turn), `api_mode_not_routed` or `surface_disabled`.
+  plugin can only report the turn) or `api_mode_not_routed`.
 - The session row is read `mode=ro` with a 50 ms lock timeout, once per turn. A missing, locked or
   unfamiliar `model_config` (the `api_server`'s `browser_model_lock`, a `follow_profile_config` flag,
   invalid JSON) is "no evidence": the turn fails open exactly as it does without this key.

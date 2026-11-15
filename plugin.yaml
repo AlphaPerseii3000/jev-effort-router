@@ -82,11 +82,6 @@ config_schema:
     default: null
     label: Routing grid override
     description: 'Optional list of entries, each "model-id: description", replacing the built-in six-model grid.'
-  platform_overrides:
-    type: dict
-    default: null
-    label: Per-surface routing policy
-    description: 'Optional map of platform (cron, telegram, cli, ...) to the settings it overrides.'
   session_selection:
     type: dict
     default: null
@@ -181,18 +176,3 @@ config_schema:
       Optional operator override of a route's effort contract (accepted levels, overrides). The
       built-in policies already declare it for every route this plugin serves; declare a map only
       to narrow or widen one. A matched entry replaces the built-in policy wholesale.
-  effort_criteria:
-    type: dict
-    default: null
-    label: Effort rubric
-    description: 'Optional map of effort level (low/medium/high/max) to the text the effort question shows for it. Overrides the built-in rubric level by level; an unknown level or empty text discards the whole knob and the built-in text applies.'
-  effort_instructions:
-    type: str
-    default: ""
-    label: Effort instructions
-    description: Optional override of the effort question's instructions. Empty keeps the built-in rule ("lowest level that covers; raise for uncertainty, risk or irreversibility — never for size").
-  confidence_threshold_per_decider:
-    type: dict
-    default: null
-    label: Confidence threshold per decider
-    description: Optional map of decider backend to confidence threshold.

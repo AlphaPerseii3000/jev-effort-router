@@ -32,6 +32,28 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - `tests/test_subscription_route.py`, the `[1m]`/both-routes cases of
   `tests/test_anthropic_native_and_variant.py` (now `tests/test_anthropic_native.py`) and
   `tests.stubs.subscription_request`.
+- **Four settings no deployment ever used, and the code that only existed for them.** None of the
+  nine profiles declares any of them, and 26 days of audit never show them in effect:
+  - `confidence_threshold_per_decider` — with one decider per profile, `confidence_threshold` is the
+    only threshold. `Settings.confidence_threshold_for` is gone; `effective()` reads the single
+    value, and `status` reports it.
+  - `effort_criteria` and `effort_instructions` — the built-in rubric in `state.py` is now the sole
+    source of the effort question's text and rule. `state.build_questions`/`build_payload` no longer
+    take the override parameters, and the tools that helped (`parse_effort_criteria`,
+    `parse_effort_instructions`, their length caps, and the `override` parameters of
+    `state.effort_criteria`/`state.effort_instructions`, now `rubric_criteria`/`rubric_instructions`)
+    are removed with them.
+  - `platform_overrides` — the per-surface policy layer (`PlatformPolicy`, `Settings.policy_for`,
+    `parse_platform_overrides`, the `policy` branch of `Settings.effective`,
+    `EffectiveSettings.max_effort`/`grid_from_policy`, the `surface_disabled` skip reason and the
+    `max_effort` field of both the memo record and the `route` audit record). `Settings.effective()`
+    now takes only the provider, so a surface can no longer be disabled, re-gridded, re-thresholded
+    or capped on its own.
+- The tests that only exercised those knobs (`tests/test_config_policy.py`'s policy half, the rubric
+  and cap cases of `tests/test_effort_rubric.py`, `tests/test_client.py`'s per-surface section, the
+  `CRON_POLICY` block of `tests/test_router.py`, and the surface-cap case in
+  `tests/test_session_selection.py`). `tests/test_config_policy.py` gains the compatibility case
+  that matters after a removal: an old `config.yaml` still carrying the four keys loads unchanged.
 
 ### Changed
 
