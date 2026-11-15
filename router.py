@@ -27,12 +27,10 @@ from .client import (
     REASON_SKIPPED_NO_MESSAGE,
     REASON_SKIPPED_PROVIDER,
     REASON_SKIPPED_UNKNOWN_MODEL,
-    REASON_SURFACE_DISABLED,
     REASON_TIMEOUT,
     REASON_USER_DATA,
     Decision,
     JevClient,
-    _cap_effort,
 )
 from .config import (
     NATIVE_ANTHROPIC_PROVIDERS,
@@ -274,14 +272,8 @@ class Router:
             self._record_skip(settings, REASON_SKIPPED_API_MODE, where, extra={"api_mode": api_mode})
             return None
 
-        # -- per-surface policy: resolved once per request ---------------------------
-        # Absent, null or an unlisted platform leaves ``policy`` None and ``effective`` equal
-        # to the global settings, so the gates below behave exactly as before the key existed.
-        policy = settings.policy_for(platform)
-        if policy is not None and policy.enabled is False:
-            self._record_skip(settings, REASON_SURFACE_DISABLED, where)
-            return None
-        effective = settings.effective(policy, provider=provider)
+        # -- the route's frozen snapshot: resolved once per request -------------------
+        effective = settings.effective(provider=provider)
 
         # -- the session's own selection ----------------------------------------------
         # Read only after every gate above has run, and only when the mode and the platform opt
@@ -433,12 +425,9 @@ class Router:
                         selection=selection,
                     )
 
-                # Effort map guard: re-resolve effort against the active provider's map and respect
-                # active max_effort cap.
+                # Effort map guard: re-resolve effort against the active provider's map.
                 req_effort = memo.effort_requested or memo.effort
-                applied_effort = (
-                    _cap_effort(req_effort, effective.max_effort) if req_effort is not None else None
-                )
+                applied_effort = req_effort
                 # The replayed level must also be one this route still offers. The map may have
                 # been narrowed since the decision was written, and ``resolve_effort`` would then
                 # consult the route's built-in policy, which declares ``max`` for ``opencode-go``,
@@ -524,7 +513,6 @@ class Router:
                     decider_commandcode_key_env=secondary.key_env,
                     decider_fallback_reason=decision.decider_fallback_reason,
                     confidence_threshold=effective.confidence_threshold,
-                    max_effort=effective.max_effort,
                     decider_fallback_model=(settings.console_jev_fallback_model or "").strip() if decision.decider == "jev_console" else "",
                     decider_key_env=settings.api_key_env_for(decision.decider),
                     grid_signature=tuple((e.model_id, e.description) for e in effective.grid),
@@ -1124,8 +1112,8 @@ class Router:
 
         Records the skip exactly as the router always did, and — only in ``mode: apply``, only with
         an eligible selection, and only from here — returns the request rewritten to what the
-        session's own row says. ``disabled``, ``provider_not_routed``, ``api_mode_not_routed``,
-        ``surface_disabled`` and ``user_data`` never reach this method: those are decisions this
+        session's own row says. ``disabled``, ``provider_not_routed``, ``api_mode_not_routed``
+        and ``user_data`` never reach this method: those are decisions this
         router may not override, not failures to be patched over. Neither does a successful
         decision: when the decider answers, its answer is what the turn runs on.
 
@@ -1194,8 +1182,7 @@ class Router:
         ``apply``. The model goes through :func:`wire_model_for` (the transport strips picker
         aliases before this middleware runs) and the level through :func:`resolve_effort`, the same
         pair the decision path uses, so a level the route's family cap does not accept is *omitted*
-        from the wire rather than clamped onto a neighbour, and a surface policy's ``max_effort``
-        still applies.
+        from the wire rather than clamped onto a neighbour.
         """
         if not settings.session_selection.applies or selection is None:
             return None
@@ -1205,7 +1192,7 @@ class Router:
             original_request,
             model=wire_model_for(provider, effective, selection.model),
             effort=self._selection_effort(
-                settings, selection, effective, original_request, provider=provider, api_mode=api_mode
+                settings, selection, original_request, provider=provider, api_mode=api_mode
             ),
             api_mode=api_mode,
         )
@@ -1214,7 +1201,6 @@ class Router:
     def _selection_effort(
         settings: Settings,
         selection: Selection,
-        effective: EffectiveSettings,
         original_request: Dict[str, Any],
         *,
         provider: str = "",
@@ -1229,9 +1215,8 @@ class Router:
         """
         if selection.enabled is False or selection.effort is None:
             return wire_effort(original_request, api_mode)
-        capped = _cap_effort(selection.effort, effective.max_effort)
         return resolve_effort(
-            selection.model, capped, provider=provider, effort_maps=settings.effort_maps
+            selection.model, selection.effort, provider=provider, effort_maps=settings.effort_maps
         )
 
     def _record_session_event(

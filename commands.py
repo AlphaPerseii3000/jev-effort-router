@@ -140,7 +140,7 @@ def _route_text(router, settings: Settings, task: str, provider: Optional[str] =
         if provider is not None
         else (settings.routable_providers[0] if settings.routable_providers else "")
     )
-    effective = settings.effective(None, provider=target_provider)
+    effective = settings.effective(provider=target_provider)
     decision, reason = router.client(settings).decide(
         [{"role": "user", "content": task}], effective, provider=target_provider
     )

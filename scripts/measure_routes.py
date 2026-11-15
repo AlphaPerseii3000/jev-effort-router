@@ -66,7 +66,6 @@ PREDECISION_SKIP_REASONS = frozenset(
         "provider_not_routed",
         "api_mode_not_routed",
         "disabled",
-        "surface_disabled",
         "no_api_key",
         "no_user_message",
         "model_not_in_grid",
