@@ -209,6 +209,13 @@ def _status(router, settings: Settings, recent: int = 5, provider: Optional[str]
     coverage = _grid_coverage(router, settings, provider=target_provider)
     if coverage:
         payload["grid_coverage"] = coverage
+    # The quota breaker is a ``jev_console`` feature: on that decider it is always reported (open
+    # or closed) so the operator can see why no decision is being made; the legacy deciders keep
+    # byte-identical status output.
+    if (settings.decider or "").strip().lower() == "jev_console":
+        breaker = router.breaker_state(settings)
+        if breaker:
+            payload["quota_breaker"] = breaker
     # The opt-in SystemOne transport is reported only when the operator configured any part of it:
     # an unconfigured deployment keeps byte-identical status output. The key variable's *name* is
     # shown, never its value.

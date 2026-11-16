@@ -12,6 +12,7 @@ from typing import Any, Dict, Optional, Sequence, Tuple
 
 from .config import EffectiveSettings, Settings
 from .decider import (
+    REASON_DECIDER_UNAVAILABLE,
     REASON_DISABLED,
     REASON_EXCEPTION,
     REASON_LOW_CONFIDENCE,
@@ -71,3 +72,14 @@ class JevClient:
             platform=platform,
             provider=provider,
         )
+
+    def breaker_state(self) -> Optional[Dict[str, Any]]:
+        """The decider's quota breaker (``None`` for backends that have none)."""
+        getter = getattr(self._decider, "breaker_state", None)
+        if not callable(getter):
+            return None
+        try:
+            state = getter()
+        except Exception:  # noqa: BLE001 - a status view never raises
+            return None
+        return state if isinstance(state, dict) else None

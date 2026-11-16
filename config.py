@@ -218,6 +218,15 @@ DEFAULT_CONSOLE_JEV_MODEL = "jev-1.13-free"
 DEFAULT_CONSOLE_JEV_FALLBACK_MODEL = "jev-1.13"
 DEFAULT_CONSOLE_KEY_ENV = "OPENCODE_CONSOLE_API_KEY"
 
+#: The ``jev_console`` quota breaker. A 429 from SystemOne is deterministic (“free usage limit
+#: reached”), not a transient hiccup: after ``threshold`` consecutive 429 answers the decider stops
+#: sending HTTP for ``ttl_s`` and the audit records one ``decider_unavailable_quota`` line per
+#: window instead of one per request. Any non-429 outcome clears the counter.
+CONSOLE_BREAKER_THRESHOLD_SETTING = "console_jev_breaker_threshold"
+CONSOLE_BREAKER_TTL_SETTING = "console_jev_breaker_ttl_s"
+DEFAULT_CONSOLE_BREAKER_THRESHOLD = 3
+DEFAULT_CONSOLE_BREAKER_TTL_S = 600.0
+
 #: The opt-in secondary transport for the ``jev_console`` decider: a SystemOne endpoint, a model
 #: and the name of the variable holding its key. The **URL** is the whole opt-in — the upstream has
 #: no ZDR agreement, so no default may enable it: with an empty ``console_jev_commandcode_base_url``
@@ -644,6 +653,10 @@ class Settings:
     console_endpoint: str = ""
     console_jev_model: str = ""
     console_jev_fallback_model: str = DEFAULT_CONSOLE_JEV_FALLBACK_MODEL
+    #: Quota breaker for the ``jev_console`` decider: N consecutive HTTP 429 answers open it and
+    #: no request reaches SystemOne until the TTL expires (see :class:`decider.QuotaBreaker`).
+    console_jev_breaker_threshold: int = DEFAULT_CONSOLE_BREAKER_THRESHOLD
+    console_jev_breaker_ttl_s: float = DEFAULT_CONSOLE_BREAKER_TTL_S
     console_api_key_env: str = ""
     #: The opt-in SystemOne secondary transport. All three default to empty = disabled, and the
     #: trio is only ever consulted by the ``jev_console`` decider (see
@@ -1023,6 +1036,16 @@ def load_settings(get_config: Optional[Callable[..., Any]] = None) -> Settings:
         console_endpoint=_as_text(read("console_endpoint", ""), ""),
         console_jev_model=console_jev_model,
         console_jev_fallback_model=console_jev_fallback,
+        console_jev_breaker_threshold=_as_int(
+            read(CONSOLE_BREAKER_THRESHOLD_SETTING, DEFAULT_CONSOLE_BREAKER_THRESHOLD),
+            DEFAULT_CONSOLE_BREAKER_THRESHOLD,
+            minimum=1,
+        ),
+        console_jev_breaker_ttl_s=_as_float(
+            read(CONSOLE_BREAKER_TTL_SETTING, DEFAULT_CONSOLE_BREAKER_TTL_S),
+            DEFAULT_CONSOLE_BREAKER_TTL_S,
+            minimum=1.0,
+        ),
         console_api_key_env=_as_text(read("console_api_key_env", ""), ""),
         console_jev_commandcode_base_url=_as_text(read(COMMANDCODE_BASE_URL_SETTING, ""), ""),
         console_jev_commandcode_api_key_env=_as_text(read(COMMANDCODE_KEY_ENV_SETTING, ""), ""),

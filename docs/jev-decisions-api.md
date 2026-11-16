@@ -286,6 +286,16 @@ The decider responds with SystemOne envelope carrying `answers`:
 
 When the primary `console_jev_model` fails (HTTP error, timeout, malformed payload), the backend iterates to `console_jev_fallback_model` (e.g. standard/paid Jev on OpenCode Console). If both fail or confidence falls below threshold, the router fails open gracefully leaving the original request intact.
 
+### Quota breaker (HTTP 429)
+
+A 429 on this wire is a spent free quota (`FreeUsageLimitError`, "Free usage limit reached") — deterministic, not transient — so retrying on every turn buys the same refusal and one more log line each time. The decider therefore counts **consecutive** 429 answers:
+
+* `console_jev_breaker_threshold` (default `3`) consecutive 429s open the breaker; while it is open **no request is sent** to the console endpoint and the turn fails open with `decider_unavailable_quota` (still a *technical* failure, so the opt-in Wire 4 fallback may answer).
+* `console_jev_breaker_ttl_s` (default `600`) is the window. When it expires the breaker closes and the next turn asks the endpoint again; a 429 there starts a new window from the first answer. A successful call — or any non-429 outcome, including a 5xx or a timeout — resets the counter, so a lone 429 never opens it.
+* The audit writes **exactly one** `decider_unavailable_quota` line per window (never one per request), carrying `audit_detail: "decider unavailable (quota)"`, the counter at the opening, and the full `quota_breaker` snapshot. The attempts that did not open the window keep their own `upstream_error` reason.
+* `jev_effort_router_status` reports a `quota_breaker` block on `decider: jev_console` with `state` (`closed`/`open`), `reason` (`quota` when open), `consecutive_429`, `threshold`, `ttl_s`, `opened_at` (wall clock, `null` while closed) and `window_id`. Legacy deciders keep byte-identical status output.
+* State is per process and per decider instance: a restart starts closed, and the breaker gates the console chain only — it never suppresses the opt-in Wire 4 transport.
+
 ---
 
 ## Wire 4: CommandCode SystemOne fallback for `jev_console` (opt-in)

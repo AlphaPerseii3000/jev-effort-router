@@ -126,6 +126,20 @@ config_schema:
       Paid second model the jev_console chain asks when the free primary fails technically. The
       default jev-1.13 costs money; the empty string disables that leg (it is not inert), and
       "none"/"false"/"off"/"disabled" mean the same.
+  console_jev_breaker_threshold:
+    type: int
+    default: 3
+    label: Quota breaker consecutive 429s
+    description: >-
+      Consecutive HTTP 429 (quota) answers from SystemOne that open the quota breaker on the
+      jev_console decider. While the breaker is open no request reaches the endpoint.
+  console_jev_breaker_ttl_s:
+    type: float
+    default: 600.0
+    label: Quota breaker window in seconds
+    description: >-
+      How long the quota breaker stays open. Once it expires the next turn calls the endpoint
+      again; a 429 there starts a new window from the first consecutive answer.
   console_api_key_env:
     type: str
     default: ""
