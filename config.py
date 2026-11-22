@@ -936,6 +936,10 @@ def _freeze_effort_spec(spec: Any) -> Any:
     used to become the valid level ``"none"``, which is exactly the bug that made a null entry
     look like a declared disable. The vocabulary is not filtered against the core's ladder: a
     route may declare its own words.
+
+    ``min``/``max`` are carried through as levels (or ``None``), never as stringified nulls: an
+    entry that declares bounds has its accepted set derived from them by
+    :func:`effort.parse_effort_spec`, so the pair survives the freeze even when it is incomplete.
     """
     if isinstance(spec, (list, tuple, set, frozenset)):
         return normalise_levels(spec)
@@ -943,6 +947,8 @@ def _freeze_effort_spec(spec: Any) -> Any:
         return MappingProxyType({
             "accepted": normalise_levels(spec.get("accepted")),
             "overrides": normalise_overrides(spec.get("overrides")),
+            "min": normalise_level(spec.get("min")),
+            "max": normalise_level(spec.get("max")),
         })
     return spec
 

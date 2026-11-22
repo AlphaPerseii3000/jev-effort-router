@@ -11,6 +11,14 @@ Two contracts live here, and only one of them guesses.
   ``"none"`` is an ordinary level here — valid when (and only when) it is declared — while
   Python ``None`` (and empty/whitespace) means "omit the field".
 
+* **Bounded** — an operator map entry that declares ``min``/``max`` per model instead of a
+  level list. The pair *is* the contract: the accepted set is the levels between the bounds, a
+  request inside them goes out verbatim and a request outside them is **clamped to the nearest
+  bound** (:func:`resolve_bounded_effort`) — never omitted, because a declared ceiling that
+  cannot hold is not a ceiling. A bounded grid also changes the effort question: it offers the
+  **union** of its models' levels (:func:`offered_levels_for_grid`), since any level can now be
+  taken by every model in it, one way or another.
+
 * **Legacy Ollama:cloud families** — only for an ``ollama-cloud`` route with **no** map entry.
   That route keeps the historical nearest-weaker clamp (:func:`clamp`) for compatibility; it is
   outside the declarative contract on purpose.
@@ -89,6 +97,10 @@ class EffortContract:
 
     accepted: Tuple[str, ...] = ()
     overrides: Mapping[str, str] = field(default_factory=lambda: MappingProxyType({}))
+    #: The declared ``(min, max)`` pair, when the entry declared one. ``accepted`` is then the
+    #: levels between the bounds and :func:`resolve_bounded_effort` clamps a request onto them;
+    #: ``None`` keeps the vocabulary contract (verbatim, declared override, else omit).
+    bounds: Optional[Tuple[str, str]] = None
 
     @property
     def valid(self) -> bool:
@@ -101,23 +113,79 @@ class EffortContract:
 
     def resolve(self, requested: Any) -> Optional[str]:
         """The level to put on the wire, or ``None`` when the contract does not cover it."""
+        if self.bounds is not None:
+            return resolve_bounded_effort(requested, self.accepted, self.overrides, self.bounds)
         return resolve_declared_effort(requested, self.accepted, self.overrides)
 
 
 EMPTY_CONTRACT = EffortContract()
 
 
+def askable_levels() -> Tuple[str, ...]:
+    """The vocabulary a question can offer, in order — ``config.EFFORT_LEVELS``.
+
+    Imported lazily: ``config`` imports this module for the level normalisation, so a
+    module-level import here would be a cycle.
+    """
+    from .config import EFFORT_LEVELS
+
+    return EFFORT_LEVELS
+
+
+def parse_effort_bounds(minimum: Any, maximum: Any) -> Optional[Tuple[str, str]]:
+    """The ``(min, max)`` pair an entry declares, or ``None`` when it declares none.
+
+    One open side is filled from the askable vocabulary (``low`` for a missing ``min``, ``max``
+    for a missing ``max``), so ``max: medium`` means "the floor up to ``medium``". Both sides
+    must be levels the question can *offer*: a bound outside that vocabulary has no position to
+    clamp onto, so the pair is refused rather than guessed. An inverted pair is refused too —
+    :func:`levels_within` would be empty and the entry would silently accept nothing.
+    """
+    low = normalise_level(minimum)
+    high = normalise_level(maximum)
+    if low is None and high is None:
+        return None
+    levels = askable_levels()
+    if low is None:
+        low = levels[0]
+    if high is None:
+        high = levels[-1]
+    if low not in levels or high not in levels:
+        return None
+    if levels.index(low) > levels.index(high):
+        return None
+    return (low, high)
+
+
+def levels_within(bounds: Tuple[str, str]) -> Tuple[str, ...]:
+    """The askable levels between two bounds, inclusive — the bounded contract's accepted set."""
+    levels = askable_levels()
+    return levels[levels.index(bounds[0]) : levels.index(bounds[1]) + 1]
+
+
 def parse_effort_spec(spec: Any) -> EffortContract:
     """Read an effort spec in either supported shape: a level sequence or ``{accepted, ...}``.
 
     Accepts the immutable structures ``config.parse_effort_maps`` produces as well as the raw
-    YAML shapes. Anything else — ``None``, a scalar, a mapping with no usable ``accepted`` —
-    yields an empty contract.
+    YAML shapes. A mapping that declares ``min``/``max`` is a *bounded* contract: its accepted
+    set is derived from the pair (:func:`levels_within`), so an ``accepted`` list beside the
+    bounds is redundant and must agree with them — a contradictory declaration accepts nothing
+    (the deliberate-shadow branch), rather than letting one key silently win over the other.
+    Anything else — ``None``, a scalar, a mapping with no usable ``accepted`` — yields an empty
+    contract.
     """
     if isinstance(spec, Mapping):
+        bounds = parse_effort_bounds(spec.get("min"), spec.get("max"))
+        accepted = normalise_levels(spec.get("accepted"))
+        if bounds is not None:
+            derived = levels_within(bounds)
+            if accepted and tuple(accepted) != derived:
+                return EMPTY_CONTRACT
+            accepted = derived
         return EffortContract(
-            accepted=normalise_levels(spec.get("accepted")),
+            accepted=accepted,
             overrides=normalise_overrides(spec.get("overrides")),
+            bounds=bounds,
         )
     if isinstance(spec, (list, tuple, set, frozenset)):
         return EffortContract(accepted=normalise_levels(spec))
@@ -154,6 +222,78 @@ def resolve_declared_effort(
     if target is not None and target in declared:
         return target
     return None
+
+
+def resolve_bounded_effort(
+    requested: Any,
+    accepted: Any,
+    overrides: Any,
+    bounds: Tuple[str, str],
+) -> Optional[str]:
+    """The level to send for a *bounded* contract: verbatim inside, clamped outside.
+
+    A declared ceiling that turns into an omission is not a ceiling — the transport then applies
+    its own default, which is the exact cost this contract exists to bound. So a request the
+    bounds do not contain lands on the nearest bound instead of being dropped:
+
+    1. a request that is not a level → omit (``None``); the bounds never invent a request;
+    2. a request the contract accepts → verbatim;
+    3. a declared override with an accepted target → that target;
+    4. a request above the ceiling → the ceiling (``clamped_max``);
+    5. a request below the floor → the floor (``clamped_min``);
+    6. a rung *inside* the bounds that this vocabulary does not carry (``xhigh`` between ``high``
+       and ``max``) → the nearest accepted level at or below it, never a stronger one;
+    7. ``none`` and any word outside :data:`LADDER` → omit: disabling reasoning is not a level to
+       raise onto the floor, and a bespoke word has no position to clamp from.
+    """
+    level = normalise_level(requested)
+    if level is None:
+        return None
+    declared = normalise_levels(accepted)
+    if not declared or bounds is None:
+        return None
+    if level in declared:
+        return level
+    target = normalise_overrides(overrides).get(level)
+    if target is not None and target in declared:
+        return target
+    if level == "none" or level not in LADDER:
+        return None
+    index = LADDER.index(level)
+    floor, ceiling = LADDER.index(bounds[0]), LADDER.index(bounds[1])
+    if index > ceiling:
+        return bounds[1]
+    if index < floor:
+        return bounds[0]
+    weaker = [candidate for candidate in declared if LADDER.index(candidate) <= index]
+    if weaker:
+        return max(weaker, key=LADDER.index)
+    return bounds[0]
+
+
+def bounds_adjustment(
+    requested: Any,
+    applied: Any,
+    bounds: Optional[Tuple[str, str]],
+) -> Optional[str]:
+    """Why ``applied`` differs from ``requested``, in the bounded contract's own words.
+
+    ``clamped_max`` / ``clamped_min`` for the two contract cases the audit has to prove, and
+    ``nearest_accepted`` for a rung inside the bounds that this vocabulary does not carry.
+    ``None`` when nothing was adjusted, or when no bounds were declared at all.
+    """
+    level = normalise_level(requested)
+    sent = normalise_level(applied)
+    if level is None or sent is None or level == sent or bounds is None:
+        return None
+    if level not in LADDER:
+        return "nearest_accepted"
+    index = LADDER.index(level)
+    if index > LADDER.index(bounds[1]):
+        return "clamped_max"
+    if index < LADDER.index(bounds[0]):
+        return "clamped_min"
+    return "nearest_accepted"
 
 
 def select_model_spec(entries: Any, model_id: Optional[str]) -> Tuple[bool, Any]:
@@ -380,6 +520,13 @@ class ModelReasoningPolicy:
     #: Such a policy is resolved with :func:`clamp` — nearest weaker, never stronger — while every
     #: declared policy (operator map or strict built-in) uses :func:`resolve_declared_effort`.
     legacy_clamp: bool = False
+    #: The ``(min, max)`` pair an operator entry declared for this model, or ``None``.
+    #:
+    #: Only an operator map declares bounds; the built-in policies declare vocabularies. With
+    #: bounds present the policy is resolved with :func:`resolve_bounded_effort` (clamp to the
+    #: nearest bound) instead of the omit rule, and the route's question offers the union of the
+    #: grid's levels (see :func:`offered_levels_for_grid`).
+    bounds: Optional[Tuple[str, str]] = None
     #: Levels this route offers by default, taken from its own built-in declaration.
     #:
     #: Empty means "not declared", and :func:`offered_levels` keeps the three-level default. A
@@ -693,6 +840,7 @@ def model_reasoning_policy(
         if found:
             contract = parse_effort_spec(spec)
             if contract.valid:
+                bounds_text = list(contract.bounds) if contract.bounds else "none"
                 return ModelReasoningPolicy(
                     provider=provider_key,
                     model_id=model_id or "",
@@ -705,11 +853,20 @@ def model_reasoning_policy(
                     omitted=False,
                     decision=(
                         f"Operator declared the effort map for {declared_by}/{model_id}: accepted "
-                        f"levels {contract.accepted}, overrides {dict(contract.overrides)}. A "
-                        "declared level goes out verbatim; a declared override whose target is "
-                        "accepted is used; anything else is omitted."
+                        f"levels {contract.accepted}, overrides {dict(contract.overrides)}, bounds "
+                        f"{bounds_text}. A declared level goes out "
+                        "verbatim; a declared override whose target is accepted is used; anything "
+                        "else is omitted."
+                        + (
+                            " Because the entry declares bounds, a request outside them is clamped to "
+                            "the nearest bound instead of being omitted, so the ceiling always reaches "
+                            "the wire."
+                            if contract.bounds
+                            else ""
+                        )
                     ),
                     overrides=contract.overrides,
+                    bounds=contract.bounds,
                 )
             return ModelReasoningPolicy(
                 provider=provider_key,
@@ -852,6 +1009,21 @@ def _declared_contract(
     return parse_effort_spec(spec)
 
 
+def declared_bounds(
+    provider: Optional[str],
+    model: Optional[str],
+    effort_maps: Optional[Mapping[str, Any]] = None,
+) -> Optional[Tuple[str, str]]:
+    """The ``(min, max)`` an operator entry declared for this model, or ``None``.
+
+    Bounds are an operator-only declaration: the built-in policies carry a vocabulary, and
+    ``None`` here means "this route keeps the declarative omit rule". Used by the question (a
+    bounded grid offers the union) and by the audit (``effort_bounds`` / ``effort_adjusted``).
+    """
+    contract = _declared_contract(provider, model, effort_maps)
+    return contract.bounds if contract is not None else None
+
+
 def offered_levels(
     provider: Optional[str],
     model: Optional[str],
@@ -874,7 +1046,9 @@ def offered_levels(
 
     A declaration that shares no level with the askable vocabulary (``accepted: [minimal]``, or
     an entry that deliberately declares nothing) is unusable *for this question*: the default
-    applies, and ``resolve_effort`` then omits whatever the answer names — it never clamps.
+    applies, and ``resolve_effort`` then omits whatever the answer names — it never clamps. A
+    bounded declaration is the documented exception: it accepts the levels between its bounds and
+    clamps the rest, so the default applies only to a contract that is genuinely unusable.
 
     Imported lazily: ``config`` imports this module for the level normalisation, so a
     module-level import here would be a cycle.
@@ -903,21 +1077,31 @@ def offered_levels_for_grid(
     provider: Optional[str],
     effort_maps: Optional[Mapping[str, Any]] = None,
 ) -> Tuple[str, ...]:
-    """The levels offered for a whole grid: those every model in it can actually be given.
+    """The levels the effort question may offer for a whole grid.
 
-    The effort question is asked once, before the model is known, so a level is only offered
-    when the answer would be applicable whichever model wins. A grid the operator left without
-    maps keeps the three-level default, and an empty grid has nothing to narrow.
+    Two rules, decided by whether the grid declares **bounds** per model:
+
+    * **Bounded grid** — any model with ``min``/``max`` in its operator entry: the question
+      offers the **union** of the models' levels. The question is asked once, before the model
+      is chosen, and a bounded model clamps whatever it cannot take, so a level only one family
+      really supports (Haiku's ``max``) is still a safe answer for the others.
+    * **Unbounded grid** — the historical **intersection**: an unoffered answer would be omitted
+      on the wire, so a level is only offered when every model in the grid can take it verbatim.
+
+    A grid the operator left without maps keeps the three-level default, and an empty grid has
+    nothing to narrow.
     """
     from .config import EFFORT_LEVELS
 
     models = [entry.model_id for entry in grid]
     if not models:
         return DEFAULT_OFFERED_LEVELS
-    common = set(offered_levels(provider, models[0], effort_maps))
-    for model_id in models[1:]:
-        common &= set(offered_levels(provider, model_id, effort_maps))
-    offered = tuple(level for level in EFFORT_LEVELS if level in common)
+    offered_sets = [set(offered_levels(provider, model_id, effort_maps)) for model_id in models]
+    if any(declared_bounds(provider, model_id, effort_maps) for model_id in models):
+        combined = set().union(*offered_sets)
+    else:
+        combined = set.intersection(*offered_sets)
+    offered = tuple(level for level in EFFORT_LEVELS if level in combined)
     return offered or DEFAULT_OFFERED_LEVELS
 
 
@@ -930,11 +1114,14 @@ def resolve_effort(
 ) -> Optional[str]:
     """The exact value to put on the wire for ``model_id``, or ``None`` to omit the field.
 
-    One algorithm, wherever the declaration came from: the selected policy's own accepted
-    levels and overrides, applied by :func:`resolve_declared_effort` — accepted level verbatim,
-    else a declared override with an accepted target, else omit. The sole exception is a legacy
-    ``ollama-cloud`` route **with no map entry**, whose family table keeps its nearest-weaker
-    clamp for compatibility.
+    One algorithm per contract shape, wherever the declaration came from: the selected policy's
+    own accepted levels and overrides, applied by :func:`resolve_declared_effort` — accepted level
+    verbatim, else a declared override with an accepted target, else omit. An operator entry that
+    declares ``min``/``max`` is resolved by :func:`resolve_bounded_effort` instead: the same
+    first two steps, then a clamp to the nearest bound, because an omitted level would fall back
+    to the transport's default and the ceiling would not hold. The sole remaining exception is a
+    legacy ``ollama-cloud`` route **with no map entry**, whose family table keeps its
+    nearest-weaker clamp for compatibility.
     """
     if normalise_level(effort) is None:
         return None
@@ -945,6 +1132,10 @@ def resolve_effort(
 
     if policy.legacy_clamp:
         return clamp(effort, policy.accepted_levels, dict(policy.overrides or {}))
+    if policy.bounds is not None:
+        return resolve_bounded_effort(
+            effort, policy.accepted_levels, policy.overrides, policy.bounds
+        )
     return resolve_declared_effort(effort, policy.accepted_levels, policy.overrides)
 
 
