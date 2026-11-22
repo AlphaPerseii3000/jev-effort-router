@@ -213,6 +213,10 @@ effort_maps:
   the pair bit, `effort_adjusted: "clamped_max"` / `"clamped_min"` (`"nearest_accepted"` for the `xhigh`
   case). Without those keys a capped turn is indistinguishable from a turn that simply ran the requested
   level.
+- **A level the question never offered is still taken, by clamping.** `_offered_wire_effort` drops
+  an unoffered answer on a vocabulary contract, but a bounded model is exempt: dropping it would hand
+  the turn to the transport's default, which sits above (or below) the pair. The level is recorded as
+  asked and clamped, on a fresh decision and on a memo replay alike.
 - **A route with no bounds is untouched.** The declarative omit rule, the strict built-in policies and the
   legacy `ollama-cloud` clamp behave exactly as before, and a route record for such a model does not gain
   either key.

@@ -45,11 +45,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `accepted` list keeps the declarative omit rule, the strict built-in policies keep their own
   vocabularies, and the legacy `ollama-cloud` family table keeps its nearest-weaker clamp. An entry
   for a provider with no bounded model changes nothing at all.
-- **A bounded model is exempt from the "unoffered level" gate** in all three deciders
-  (`jev`, `openai_compatible`, `jev_console`) and in the memo replay. The gate exists to keep a
-  well-formed but unoffered level off the wire; on a bounded model the level is clamped instead, so
-  dropping it would hand the turn to the transport's default — above the ceiling. Every call site
-  passes `model`/`provider`/`effort_maps` to `_offered_wire_effort`.
+- **An answer the question did not offer is clamped, not dropped, on a bounded model.**
+  `decider._offered_wire_effort` keeps its gate for a vocabulary contract — an unoffered level must
+  not reach the wire — but a model with bounds takes any level by clamping, so the level is resolved
+  instead of being replaced by the transport's own default (on a fresh decision and on a memo replay).
+- **A bounded model is exempt from that gate** in all three deciders (`jev`, `openai_compatible`,
+  `jev_console`) and in the memo replay. Every call site passes `model`/`provider`/`effort_maps` to
+  `_offered_wire_effort`.
 - `docs/SPEC.md`, `docs/routing-grid.md`, `docs/jev-decisions-api.md`, `README.md` and
   `plugin.yaml` document the bounded contract, the union question and the two audit keys, including
   the mixed-grid caveat (a grid with bounded *and* `accepted`-only models offers the union, but the

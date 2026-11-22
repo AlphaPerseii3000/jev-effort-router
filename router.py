@@ -453,9 +453,16 @@ class Router:
                 # ``commandcode`` and ``codex``: the turn would run a level its question never
                 # offered. Omitting the field keeps the memoised model and leaves effort to the
                 # host instead of to a level nobody asked for. A bounded grid offers the union, so
-                # a memoised level stays offered and the clamp below is what applies it.
-                if applied_effort is not None and applied_effort not in offered_levels_for_grid(
-                    effective.grid, provider, settings.effort_maps
+                # a memoised level stays offered; and a model with declared bounds is exempt even
+                # when it does not, because its contract takes the level by clamping — omitting it
+                # there would hand the turn to the transport's default, above the ceiling.
+                if (
+                    applied_effort is not None
+                    and applied_effort
+                    not in offered_levels_for_grid(
+                        effective.grid, provider, settings.effort_maps
+                    )
+                    and declared_bounds(provider, memo.model, settings.effort_maps) is None
                 ):
                     logger.info(
                         "jev-effort-router: memo effort %r is not offered by %r anymore; omitting it",

@@ -19,6 +19,8 @@ compatibility is pinned here too, on the same functions.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 from stubs import StubResponse, StubTransport, anthropic_request, decision_payload
 from test_router import build, route
@@ -399,6 +401,106 @@ def test_the_replay_reapplies_the_declaration_to_the_memoised_request(tmp_path, 
     assert record["effort_requested"] == "high"
     assert record["effort"] == "medium"
     assert record["effort_adjusted"] == "clamped_max"
+
+
+def test_an_unoffered_level_on_a_bounded_model_is_clamped_not_dropped(tmp_path, monkeypatch):
+    """Never omit when the model has bounds — on a fresh decision and on the replay.
+
+    A Haiku-only bounded grid offers ``medium..max``, so ``low`` is not an option. A vocabulary
+    contract would drop it (an answer the question never offered). The bounds take it: the floor is
+    ``medium``, and dropping it would leave the transport's default — above or below the pair, not
+    where the operator said the turn should run.
+    """
+    monkeypatch.setenv("OPENCODE_CONSOLE_API_KEY", "test-console-key")
+    transport = StubTransport(
+        [StubResponse(decision_payload("1", 0.95, "low", 0.9, grid_size=1))]
+    )
+    config = dict(
+        BOUNDED_CONFIG,
+        grids={"anthropic": [f"{HAIKU}: high-volume chores"]},
+    )
+    router, settings = build(tmp_path, transport, config=config)
+    monkeypatch.setattr(router, "_data_dir", lambda: str(tmp_path / "audit"))
+    request = anthropic_request(model=HAIKU)
+
+    first = anthropic_route(
+        router, request, model=HAIKU, turn_id="bounds-unoffered", session_id="bounds-unoffered"
+    )
+    second = anthropic_route(
+        router,
+        request,
+        model=HAIKU,
+        turn_id="bounds-unoffered",
+        session_id="bounds-unoffered",
+        api_call_count=1,
+    )
+
+    assert first is not None and second is not None
+    assert first["request"]["output_config"] == {"effort": "medium"}
+    assert second["request"]["output_config"] == {"effort": "medium"}
+    assert transport.call_count == 1
+    record = router.tail(settings, limit=1)[0]
+    assert record["replayed"] is True
+    assert record["effort_requested"] == "low"
+    assert record["effort"] == "medium"
+    assert record["effort_adjusted"] == "clamped_min"
+
+
+def test_the_openai_compatible_decider_applies_the_same_clamp(monkeypatch):
+    """The clamp lives in ``resolve_effort``, so every backend gets it — not just the console.
+
+    A one-model grid puts this backend on its effort-only prompt shape, so the answer names the
+    level and nothing else; ``haiku``'s floor then raises ``low`` to ``medium``.
+    """
+    from client import JevClient
+    from stubs import StubResponse, StubTransport
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")
+    transport = StubTransport(
+        [
+            StubResponse(
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "content": json.dumps(
+                                    {
+                                        "model": HAIKU,
+                                        "effort": "low",
+                                        "confidence": 0.95,
+                                    }
+                                )
+                            }
+                        }
+                    ]
+                }
+            )
+        ]
+    )
+    settings = _settings(
+        {
+            "decider": "openai_compatible",
+            "decider_base_url": "https://api.anthropic.com",
+            "decider_model": HAIKU,
+            "decider_api_key_env": "ANTHROPIC_API_KEY",
+            "routable_providers": ["anthropic"],
+            "grid": [f"{HAIKU}: high-volume chores"],
+            "effort_maps": BOUNDS_RAW,
+        }
+    )
+    client = JevClient(settings, transport=transport)
+
+    decision, reason = client.decide(
+        [{"role": "user", "content": "plan the migration"}],
+        settings.effective(None, provider="anthropic"),
+        provider="anthropic",
+    )
+
+    assert reason is None
+    assert decision is not None
+    assert decision.model == HAIKU
+    assert decision.effort_requested == "low"
+    assert decision.effort == "medium"
 
 
 def test_the_settings_view_of_the_bounds_matches_the_parsed_map():

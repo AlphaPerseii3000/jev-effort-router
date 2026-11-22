@@ -37,7 +37,7 @@ from .config import (
     redact,
     route_allowlist,
 )
-from .effort import offered_levels_for_grid, resolve_effort
+from .effort import declared_bounds, offered_levels_for_grid, resolve_effort
 from .grid import Entry, criteria, resolve
 from .state import (
     EFFORT_QUESTION_ID,
@@ -181,7 +181,14 @@ def _effort_question_kwargs(levels: Sequence[str]) -> Dict[str, Any]:
     return {"levels": tuple(levels)}
 
 
-def _offered_wire_effort(applied: Optional[str], levels: Sequence[str]) -> Optional[str]:
+def _offered_wire_effort(
+    applied: Optional[str],
+    levels: Sequence[str],
+    *,
+    model: Optional[str] = None,
+    provider: str = "",
+    effort_maps: Optional[Mapping[str, Any]] = None,
+) -> Optional[str]:
     """The level to resolve onto the wire, or ``None`` when the question never offered it.
 
     ``max`` joined ``EFFORT_LEVELS``, but a route only *offers* the levels its ``effort_maps``
@@ -191,11 +198,13 @@ def _offered_wire_effort(applied: Optional[str], levels: Sequence[str]) -> Optio
     would reach the wire, and the turn would run the priciest rung on a question that never named
     it. ``effort_requested`` keeps what Jev answered; only the wire drops it.
 
-    This gate is about the *question*, not about a bounded contract: when the grid declares
-    ``min``/``max`` bounds the offered set is the union, every offered level is applicable, and a
-    model that cannot take one clamps it in ``resolve_effort``.
+    A model with declared **bounds** is exempt: its contract can take any level by clamping, and
+    dropping the answer would fall back to the transport's own default — the exact level the
+    declared ceiling exists to bound. The level is handed to ``resolve_effort``, which clamps it.
     """
     if applied is None or applied in levels:
+        return applied
+    if declared_bounds(provider, model, effort_maps) is not None:
         return applied
     return None
 
@@ -845,7 +854,13 @@ class OpenAICompatibleDecider(BaseDecider):
         # What was asked for stays visible; only a level the prompt actually offered survives to
         # the wire.
         requested: Optional[str] = candidate
-        applied = _offered_wire_effort(requested, levels)
+        applied = _offered_wire_effort(
+            requested,
+            levels,
+            model=chosen.model_id,
+            provider=provider,
+            effort_maps=self._settings.effort_maps,
+        )
 
         effort = resolve_effort(
             chosen.model_id,
@@ -1399,8 +1414,15 @@ class JevConsoleDecider(BaseDecider):
 
         # ``requested`` is what Jev asked for; the decision carries it beside the applied level so
         # the audit can tell an omitted turn from an applied one. A level this route never offered
-        # stops here: it is recorded, never resolved onto the wire.
-        applied = _offered_wire_effort(requested, levels)
+        # stops here: it is recorded, never resolved onto the wire — unless the chosen model
+        # declares bounds, which take it by clamping.
+        applied = _offered_wire_effort(
+            requested,
+            levels,
+            model=model,
+            provider=provider,
+            effort_maps=self._settings.effort_maps,
+        )
 
         effort = resolve_effort(
             model,
