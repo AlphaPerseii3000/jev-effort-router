@@ -169,7 +169,9 @@ def _offered_levels(
 
     Derived from the route's effort map (``effort.offered_levels_for_grid``), so the question,
     the accepted answer keys and the applied value all come from one source: ``max`` is only
-    offered where the map declares it, and never offered and clamped away afterwards.
+    offered where the route declares it. A grid with declared ``min``/``max`` bounds offers the
+    union of its models' levels — the answer is clamped per model, so offering ``max`` there is
+    not offering a level that would be dropped.
     """
     return offered_levels_for_grid(effective.grid, provider, settings.effort_maps)
 
@@ -188,6 +190,10 @@ def _offered_wire_effort(applied: Optional[str], levels: Sequence[str]) -> Optio
     answer against the vocabulary alone is therefore not enough: a well-formed but unoffered level
     would reach the wire, and the turn would run the priciest rung on a question that never named
     it. ``effort_requested`` keeps what Jev answered; only the wire drops it.
+
+    This gate is about the *question*, not about a bounded contract: when the grid declares
+    ``min``/``max`` bounds the offered set is the union, every offered level is applicable, and a
+    model that cannot take one clamps it in ``resolve_effort``.
     """
     if applied is None or applied in levels:
         return applied
@@ -614,8 +620,9 @@ class OpenAICompatibleDecider(BaseDecider):
             for lvl, desc in rubric_criteria(levels).items()
         ]
         # The schema and the rule name exactly the levels this route was offered: a level the
-        # wire would clamp away must never appear in the prompt, or the model spends the answer
-        # on a value the router cannot apply.
+        # route would drop must never appear in the prompt, or the model spends the answer on a
+        # value the router cannot apply. A bounded grid's sentinel levels are all applicable —
+        # the unbounded ones are clamped onto the chosen model's pair.
         effort_enum = "|".join(levels)
         if len(levels) == 1:
             effort_rule = f"- The effort MUST be {levels[0]}."

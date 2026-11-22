@@ -48,7 +48,7 @@ from .config import (
     same_provider_route,
     wire_style,
 )
-from .effort import offered_levels_for_grid, resolve_effort
+from .effort import bounds_adjustment, declared_bounds, offered_levels_for_grid, resolve_effort
 from .memo import Memo, TurnMemo, failure_marker
 from .selection import SELECTION_SOURCE_SESSION_ROW, Selection, SelectionReader
 from .selection import profile_home as selection_profile_home
@@ -452,7 +452,8 @@ class Router:
                 # consult the route's built-in policy, which declares ``max`` for ``opencode-go``,
                 # ``commandcode`` and ``codex``: the turn would run a level its question never
                 # offered. Omitting the field keeps the memoised model and leaves effort to the
-                # host instead of to a level nobody asked for.
+                # host instead of to a level nobody asked for. A bounded grid offers the union, so
+                # a memoised level stays offered and the clamp below is what applies it.
                 if applied_effort is not None and applied_effort not in offered_levels_for_grid(
                     effective.grid, provider, settings.effort_maps
                 ):
@@ -1408,6 +1409,17 @@ class Router:
             "decider": getattr(decision, "decider", settings.decider),
             "replayed": bool(replayed),
         }
+        # A route that declares per-model effort bounds gets the proof of the clamp: the pair
+        # itself, and — only when it actually bit — the reason the applied level is not the one
+        # the decider asked for. ``effort`` already carries the applied value and
+        # ``effort_requested`` the request, so the three together show the ceiling held rather
+        # than trusting it. Routes without bounds keep exactly the shape they had.
+        bounds = declared_bounds(where.provider, decision.model, settings.effort_maps)
+        if bounds is not None:
+            record["effort_bounds"] = list(bounds)
+            adjusted = bounds_adjustment(decision.effort_requested, decision.effort, bounds)
+            if adjusted is not None:
+                record["effort_adjusted"] = adjusted
         secondary = settings.active_commandcode_fallback()
         if secondary.enabled:
             # Provenance of the call that produced the decision. Only a deployment that opted into

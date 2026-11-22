@@ -407,7 +407,9 @@ def normalise_effort_choice(raw: Any) -> Optional[str]:
     ``effort_maps`` entry declares, so a level outside that set is still a level here. Gating it
     is the deciders' job, because only they hold the offered set (``_offered_wire_effort``), and
     ``effort.resolve_effort`` keeps the last word on whether an offered level goes on the wire —
-    omitted, never clamped, with ``effort_requested`` recording what Jev asked for.
+    omitted for a vocabulary contract, clamped onto its bounds for a bounded one — with
+    ``effort_requested`` recording what Jev asked for and the audit's ``effort_adjusted`` naming
+    the clamp when one happened.
     """
     text = str(raw or "").strip().lower()
     return text if text in EFFORT_LEVELS else None
