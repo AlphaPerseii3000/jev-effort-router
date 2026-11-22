@@ -524,9 +524,17 @@ class JevDecider(BaseDecider):
             # A weak or unknown answer still routes: fall back to the configured default.
             requested = effective.default_effort
 
-        # ``requested`` keeps what was asked for (Jev's answer, or the configured default) and
-        # only a level the question offered goes further to the wire.
-        applied = _offered_wire_effort(requested, levels)
+        # ``requested`` keeps what was asked for (Jev's answer, or the configured default). A level
+        # this route never offered is dropped — unless the chosen model declares bounds, whose
+        # contract takes any level by clamping (dropping it there would fall back to the
+        # transport's default, above the ceiling).
+        applied = _offered_wire_effort(
+            requested,
+            levels,
+            model=model,
+            provider=provider,
+            effort_maps=self._settings.effort_maps,
+        )
 
         effort = resolve_effort(
             model,

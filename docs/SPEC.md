@@ -98,7 +98,9 @@ reasoning and generation in the main model — it only steers.
 - Effort levels are translated through a per-family mapping table, never sent as a generic parameter:
   a family's declared vocabulary decides, and a level it does not accept is omitted rather than guessed —
   unless the operator declared explicit `min`/`max` bounds for that model, in which case the level is
-  clamped onto the bound so the declared ceiling always reaches the wire (see routing-grid.md).
+  clamped onto the bound so the declared ceiling always reaches the wire (see routing-grid.md). The
+  audit keeps the asked level in `effort_requested` beside the applied `effort`, so the clamp is visible
+  rather than inferred.
 - An effort question is asked once, before the model is chosen. When any model in the grid declares
   bounds, the question offers the **union** of the models' levels (each answer is clamped per model);
   otherwise it offers only the levels every model accepts verbatim, so an answer is never offered and

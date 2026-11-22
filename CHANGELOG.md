@@ -49,9 +49,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   `decider._offered_wire_effort` keeps its gate for a vocabulary contract — an unoffered level must
   not reach the wire — but a model with bounds takes any level by clamping, so the level is resolved
   instead of being replaced by the transport's own default (on a fresh decision and on a memo replay).
-- **A bounded model is exempt from that gate** in all three deciders (`jev`, `openai_compatible`,
-  `jev_console`) and in the memo replay. Every call site passes `model`/`provider`/`effort_maps` to
-  `_offered_wire_effort`.
+- **All three decider backends take the bounds.** `decider: jev` (the legacy Decisions API) was still
+  resolving the level without the model, provider and map the exemption needs, so an answer its
+  question did not offer was dropped on a bounded model — and the transport's own default then ran,
+  which is exactly what the ceiling exists to prevent. `jev`, `openai_compatible` and `jev_console`
+  now share the same clamp.
+- **A bounded model is exempt from that gate** in all three deciders and in the memo replay. Every
+  call site passes `model`/`provider`/`effort_maps` to `_offered_wire_effort`.
 - `docs/SPEC.md`, `docs/routing-grid.md`, `docs/jev-decisions-api.md`, `README.md` and
   `plugin.yaml` document the bounded contract, the union question and the two audit keys, including
   the mixed-grid caveat (a grid with bounded *and* `accepted`-only models offers the union, but the
@@ -60,6 +64,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 ### Added (tests)
 
 - `tests/test_effort_bounds.py`: the declaration (derivation, one open side, contradictory and
+<<<<<<< HEAD
   unorderable pairs, per-model lookup), the union question, all twelve model×level clamps with their
   audit reason, the "a bounded model never drops the field" invariant, the `xhigh` gap case, the
   three deciders applying the same clamp, the compatibility paths (accepted-only map still omits,
@@ -74,7 +79,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   (`confidence_threshold_per_decider`, `effort_criteria`, `effort_instructions`,
   `platform_overrides`). With `platform_overrides` gone there is no per-surface `max_effort` cap any
   more, so the bounds are applied to the level the decider produced — the cap-versus-bounds
-  attribution this work carried on its 0.7.1 base (`Decision.effort_capped`, the
+  attribution this work carried on its pre-rebase 0.7.1 line (`Decision.effort_capped`, the
   `effort_capped` audit key) is not part of this release because its subject no longer exists.
 
 ## [0.8.0] - 2026-11-15
@@ -136,6 +141,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
   who wants that translation now declares it. `plugin.yaml` and the README say so.
 - The session-selection suite runs on the native `anthropic` route (`output_config.effort`), and
   `plugin.yaml`/`pyproject.toml` say `0.8.0`.
+=======
+  unorderable pairs, per-model lookup), the union question, all twelve model×level clamps with
+  their audit reason, the "a bounded model never drops the field" invariant, the `xhigh` gap case,
+  the compatibility paths (accepted-only map still omits, built-in caps still omit, legacy Ollama
+  clamp untouched), and the wire/audit end to end — including a replay that re-applies the
+  declaration to a memo written before the bounds existed, the same clamp through the
+  `openai_compatible` and `jev` deciders, and the two cap-vs-bounds attribution cases.
+>>>>>>> baac58c (fix(effort): bound the legacy jev decider and attribute the cap honestly)
 
 ## [0.7.0] - 2026-11-15
 

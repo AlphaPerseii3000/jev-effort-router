@@ -48,7 +48,12 @@ from .config import (
     same_provider_route,
     wire_style,
 )
-from .effort import bounds_adjustment, declared_bounds, offered_levels_for_grid, resolve_effort
+from .effort import (
+    bounds_adjustment,
+    declared_bounds,
+    offered_levels_for_grid,
+    resolve_effort,
+)
 from .memo import Memo, TurnMemo, failure_marker
 from .selection import SELECTION_SOURCE_SESSION_ROW, Selection, SelectionReader
 from .selection import profile_home as selection_profile_home
@@ -477,7 +482,7 @@ class Router:
                     provider=provider,
                     effort_maps=settings.effort_maps,
                 )
-                # ``effort_requested`` keeps what the decision asked for: a cap applied to the
+                # ``effort_requested`` keeps what the decision asked for: the level applied to the
                 # replay is visible in ``effort`` (and in ``effort_requested != effort``), not by
                 # rewriting the request into the value that was actually applied.
                 decision = _decision_from_memo(memo, effort=re_effort)
@@ -1566,6 +1571,10 @@ def _decision_from_memo(memo: Memo, effort: Any = _UNSET) -> Decision:
     the per-criterion distributions, the full alternative list, the effort-choice string —
     is left empty/``None`` rather than reconstructed from a sibling field: an audit record
     must never report a value that was not measured at replay.
+
+    ``effort`` is the level this replay resolves onto the wire (the memoised request re-applied
+    against the *current* declaration); it is a fact about this run, not about the memo, so it is
+    passed in rather than read back.
     """
     actual_effort = memo.effort if effort is _UNSET else effort
     return Decision(

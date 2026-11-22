@@ -211,19 +211,21 @@ effort_maps:
 - **The audit proves it.** The route record keeps `effort_requested` (what the decider asked for) and
   `effort` (what reached the wire), and a bounded model adds `effort_bounds: [min, max]` plus, only when
   the pair bit, `effort_adjusted: "clamped_max"` / `"clamped_min"` (`"nearest_accepted"` for the `xhigh`
-  case). Without those keys a capped turn is indistinguishable from a turn that simply ran the requested
+  case). Without those keys a clamped turn is indistinguishable from a turn that simply ran the requested
   level.
 - **A level the question never offered is still taken, by clamping.** `_offered_wire_effort` drops
   an unoffered answer on a vocabulary contract, but a bounded model is exempt: dropping it would hand
   the turn to the transport's default, which sits above (or below) the pair. The level is recorded as
-  asked and clamped, on a fresh decision and on a memo replay alike.
+  asked and clamped, on a fresh decision and on a memo replay alike — and on all three decider backends
+  (`jev`, `openai_compatible`, `jev_console`).
+- **A mixed grid is still two contracts.** A grid that mixes a bounded model with an `accepted`-only one
+  offers the union, because the bounded model needs it — but the `accepted`-only model keeps the omit rule:
+  a level outside its list is dropped from the wire for that model, which then runs the transport's default,
+  and its record carries no `effort_bounds`. An operator who wants a ceiling to hold on every model of a
+  route declares bounds for every model.
 - **A route with no bounds is untouched.** The declarative omit rule, the strict built-in policies and the
   legacy `ollama-cloud` clamp behave exactly as before, and a route record for such a model does not gain
   either key.
-- **A mixed grid is two contracts.** A grid where one model declares bounds and another only an `accepted`
-  list offers the union, but the level outside the unbounded model's accepted set is still omitted there
-  (it falls back to the transport's default and the record gains no `effort_bounds`). Declare bounds on
-  every model of a route if the ceiling has to hold on all of them.
 
 #### The wire: `output_config.effort`
 

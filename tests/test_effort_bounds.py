@@ -243,19 +243,91 @@ def test_the_legacy_ollama_clamp_is_untouched():
     assert declared_bounds("ollama-cloud", "kimi-k3", None) is None
 
 
-def test_a_floor_above_the_operator_cap_wins_and_is_visible():
-    """The cap runs before the bounds, so a contradictory pair is resolved, not hidden.
+def test_a_retired_platform_override_no_longer_caps_a_bounded_model(tmp_path, monkeypatch):
+    """``platform_overrides`` (and its ``max_effort``) left in 0.8.0; the bounds are the only clamp.
 
-    ``max_effort: low`` cannot be honoured by a model whose floor is ``medium``: the level is capped
-    to ``low`` and the bounds raise it back to ``medium``. The audit shows the applied level, so the
-    conflict surfaces instead of silently running below the declared floor.
+    A profile still carrying the removed block must load and route exactly like one without it:
+    Haiku asked for ``high`` runs ``high``, and a pair the old cap would have lowered is reported
+    untouched. Pinned here because the cap-versus-bounds attribution this file used to exercise at
+    route level has no subject left — the removal is what makes ``effort_adjusted`` unambiguous.
     """
-    from decider import _cap_effort
+    monkeypatch.setenv("OPENCODE_CONSOLE_API_KEY", "test-console-key")
+    transport = StubTransport(
+        [StubResponse(decision_payload("1", 0.95, "high", 0.9, grid_size=3))]
+    )
+    config = dict(BOUNDED_CONFIG, platform_overrides={"cli": {"max_effort": "low"}})
+    router, settings = build(tmp_path, transport, config=config)
+    monkeypatch.setattr(router, "_data_dir", lambda: str(tmp_path / "audit"))
 
-    capped = _cap_effort("high", "low")
+    result = anthropic_route(
+        router, model=HAIKU, turn_id="bounds-retired-cap", session_id="bounds-retired-cap"
+    )
 
-    assert capped == "low"
-    assert resolve_effort(HAIKU, capped, provider="anthropic", effort_maps=BOUNDS) == "medium"
+    assert result is not None
+    assert result["request"]["output_config"] == {"effort": "high"}
+    record = router.tail(settings, limit=1)[0]
+    assert record["effort_requested"] == "high"
+    assert record["effort"] == "high"
+    assert record["effort_bounds"] == ["medium", "max"]
+    assert "effort_adjusted" not in record
+    assert "effort_capped" not in record
+
+
+def test_the_retired_cap_leaves_no_key_on_the_replayed_record(tmp_path, monkeypatch):
+    """The replay carries the same three facts and still no cap key: the removal is not half-done.
+
+    Opus (``low..medium``) asked for ``high`` with a retired ``max_effort: medium`` left in the
+    config: the pair alone produces ``medium``, the reason is ``clamped_max``, and no record ever
+    names a cap that no longer exists.
+    """
+    monkeypatch.setenv("OPENCODE_CONSOLE_API_KEY", "test-console-key")
+    transport = StubTransport(
+        [StubResponse(decision_payload("3", 0.95, "high", 0.9, grid_size=3))]
+    )
+    config = dict(BOUNDED_CONFIG, platform_overrides={"cli": {"max_effort": "medium"}})
+    router, settings = build(tmp_path, transport, config=config)
+    monkeypatch.setattr(router, "_data_dir", lambda: str(tmp_path / "audit"))
+    request = anthropic_request(model=OPUS)
+
+    first = anthropic_route(
+        router, request, model=OPUS, turn_id="bounds-retired-replay", session_id="bounds-retired-replay"
+    )
+    second = anthropic_route(
+        router,
+        request,
+        model=OPUS,
+        turn_id="bounds-retired-replay",
+        session_id="bounds-retired-replay",
+        api_call_count=1,
+    )
+
+    assert first is not None and second is not None
+    assert first["request"]["output_config"] == {"effort": "medium"}
+    assert second["request"]["output_config"] == {"effort": "medium"}
+    assert transport.call_count == 1
+    record = router.tail(settings, limit=1)[0]
+    assert record["replayed"] is True
+    assert record["effort_requested"] == "high"
+    assert record["effort"] == "medium"
+    assert record["effort_bounds"] == ["low", "medium"]
+    assert record["effort_adjusted"] == "clamped_max"
+    assert "effort_capped" not in record
+
+
+def test_a_legacy_platform_overrides_block_is_ignored_and_the_bounds_survive():
+    """The removed key neither raises nor resurrects a cap, and the declaration is intact."""
+    settings = _settings(dict(BOUNDED_CONFIG, platform_overrides={"cli": {"max_effort": "low"}}))
+
+    assert not hasattr(settings, "platform_overrides")
+    effective = settings.effective(provider="anthropic")
+    assert not hasattr(effective, "max_effort")
+    assert declared_bounds("anthropic", HAIKU, settings.effort_maps) == ("medium", "max")
+    assert offered_levels_for_grid(ANTHROPIC_GRID, "anthropic", settings.effort_maps) == (
+        "low",
+        "medium",
+        "high",
+        "max",
+    )
 
 
 # -- the wire and the audit ------------------------------------------------------
@@ -492,12 +564,50 @@ def test_the_openai_compatible_decider_applies_the_same_clamp(monkeypatch):
 
     decision, reason = client.decide(
         [{"role": "user", "content": "plan the migration"}],
-        settings.effective(None, provider="anthropic"),
+        settings.effective(provider="anthropic"),
         provider="anthropic",
     )
 
     assert reason is None
     assert decision is not None
+    assert decision.model == HAIKU
+    assert decision.effort_requested == "low"
+    assert decision.effort == "medium"
+
+
+
+def test_the_jev_decider_applies_the_same_clamp(monkeypatch):
+    """The third backend takes the bounds too: ``low`` on a Haiku-only grid lands on ``medium``.
+
+    ``decider: jev`` (the legacy Decisions API) used to resolve the level without the clamp
+    exemption, so a level the Haiku-only question never offered was dropped and the turn fell back
+    to the transport's default — on a model that declares bounds, exactly what must not happen.
+    """
+    from client import JevClient
+
+    monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+    transport = StubTransport(
+        [StubResponse(decision_payload("1", 0.95, "low", 0.9, grid_size=1))]
+    )
+    settings = _settings(
+        {
+            "decider": "jev",
+            "routable_providers": ["anthropic"],
+            "grid": [f"{HAIKU}: high-volume chores"],
+            "effort_maps": BOUNDS_RAW,
+        }
+    )
+    client = JevClient(settings, transport=transport)
+
+    decision, reason = client.decide(
+        [{"role": "user", "content": "plan the migration"}],
+        settings.effective(provider="anthropic"),
+        provider="anthropic",
+    )
+
+    assert reason is None
+    assert decision is not None
+    assert decision.decider == "jev"
     assert decision.model == HAIKU
     assert decision.effort_requested == "low"
     assert decision.effort == "medium"
