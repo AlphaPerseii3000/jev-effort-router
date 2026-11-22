@@ -1,5 +1,5 @@
 name: jev-effort-router
-version: 0.8.0
+version: 0.8.1
 manifest_version: 2
 api_version: 1
 description: Route user turns to the best model and reasoning effort via pluggable deciders (TypeSafe Jev or OpenAI-compatible).
@@ -187,6 +187,10 @@ config_schema:
     default: null
     label: Per-provider effort maps
     description: >-
-      Optional operator override of a route's effort contract (accepted levels, overrides). The
-      built-in policies already declare it for every route this plugin serves; declare a map only
-      to narrow or widen one. A matched entry replaces the built-in policy wholesale.
+      Optional operator override of a route's effort contract (accepted levels, overrides, or a
+      min/max pair). The built-in policies already declare it for every route this plugin serves;
+      declare a map only to narrow or widen one. A matched entry replaces the built-in policy
+      wholesale. An entry that declares min/max is a range: accepted is derived from the pair, a
+      request outside it is clamped onto the nearest bound instead of omitted (audit: effort_bounds
+      and effort_adjusted), and the effort question for that grid offers the union of its models'
+      levels. An entry with an accepted list keeps the declarative omit rule.

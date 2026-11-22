@@ -171,7 +171,7 @@ form generated from `plugin.yaml`.
 | `include_user_message_in_audit` | `false` | Off keeps conversation content out of the audit. |
 | `grid` | `null` | Optional `["model-id: description", ...]` replacing the default grid. |
 | `grids` | `null` | Optional operator override of a route's choice set. Empty uses the route's built-in catalog (`grid.py`), which is the single source of the model ids and their descriptions. |
-| `effort_maps` | `null` | Optional operator override of a route's effort contract (`accepted` levels, `overrides`). Every route ships a built-in policy that already declares its accepted levels *and* which levels the effort question offers; declare a map only to narrow or widen one. The effort question's own text (the four rungs and the rule) is built into `state.py` and is not configurable. |
+| `effort_maps` | `null` | Optional operator override of a route's effort contract (`accepted` levels, `overrides`, or a `min`/`max` pair). Every route ships a built-in policy that already declares its accepted levels *and* which levels the effort question offers; declare a map only to narrow or widen one. A `min`/`max` entry is a range: `accepted` is derived from it, a level outside it is clamped onto the nearest bound instead of omitted, and the question for that grid offers the union of its models' levels. The effort question's own text (the four rungs and the rule) is built into `state.py` and is not configurable. |
 | `session_selection` | `null` | Optional reconciliation of the webui session's own model/effort pick on a fail-open turn: `mode` (`off`/`warn`/`apply`), `platforms` and `provider_map`. Defaults to `off`, which never reads the session row. |
 
 ### Minimal profile block
@@ -257,7 +257,7 @@ plugins:
               - "claude-opus-5-5: planning, orchestration, architecture, multi-step debugging and deep analysis"
   ```
   Its catalog (`ANTHROPIC_GRID`) carries one id per family, copied from the provider's own model list (the Hermes cache at `<HERMES_HOME>/provider_models_cache.json` → `anthropic`), and the effort caps are per family: `low`/`medium`/`high` on Sonnet and Opus, plus `max` on Haiku. `claude-sonnet-5-5` is the route's default model, i.e. what a degraded turn keeps. The level is written to `output_config.effort` inside the `output_config` the transport already built — never to a top-level `reasoning_effort`, which is not a Messages field, and never by adding the container itself.
-- **Effort verification**: Reasoning effort levels are never guessed. Each opt-in route declares its own contract in `effort.py`: `opencode-go` and `commandcode` both send the decided level as a top-level `reasoning_effort` (`low`/`medium`/`high`/`max`, with `xhigh` mapped onto `max` by the same declared override the Hermes core uses, probe-confirmed on 2026-10-20 against `POST https://opencode.ai/zen/go/v1/chat/completions` and `POST https://api.commandcode.ai/provider/v1/chat/completions` respectively), while `opencode-console` keeps omitting the plugin's own field. On `commandcode` that level rides beside the `extra_body.thinking` toggle the provider profile derives, never instead of it. A level outside a route's declared set (`minimal`, `none`, an unknown string) is omitted rather than clamped, and an operator `effort_maps` entry still overrides the built-in policy. That override is the custom path, not a merge: a matched model entry **replaces** the built-in policy's vocabulary, level for level — declare everything the route should accept, including any `xhigh → max` mapping, because nothing is inherited from the built-in policy. Add an entry only when deliberately narrowing a route; for `commandcode` the reference profile carries none. The entry also decides what the effort question may ask for: `max` is offered only where the route declares it — the operator's `effort_maps` entry, or (on `anthropic`) the route's own per-family cap, which is Haiku's `max` and nobody else's.
+- **Effort verification**: Reasoning effort levels are never guessed. Each opt-in route declares its own contract in `effort.py`: `opencode-go` and `commandcode` both send the decided level as a top-level `reasoning_effort` (`low`/`medium`/`high`/`max`, with `xhigh` mapped onto `max` by the same declared override the Hermes core uses, probe-confirmed on 2026-10-20 against `POST https://opencode.ai/zen/go/v1/chat/completions` and `POST https://api.commandcode.ai/provider/v1/chat/completions` respectively), while `opencode-console` keeps omitting the plugin's own field. On `commandcode` that level rides beside the `extra_body.thinking` toggle the provider profile derives, never instead of it. A level outside a route's declared set (`minimal`, `none`, an unknown string) is omitted rather than clamped, and an operator `effort_maps` entry still overrides the built-in policy. That entry comes in two shapes: an `accepted` list, matched exactly — never clamped — and a `min`/`max` pair, which *is* a range: the applied level is clamped onto it and the question for that grid offers the union of its models' levels instead of their intersection (see the `anthropic` section below). That override is the custom path, not a merge: a matched model entry **replaces** the built-in policy's vocabulary, level for level — declare everything the route should accept, including any `xhigh → max` mapping, because nothing is inherited from the built-in policy. Add an entry only when deliberately narrowing a route; for `commandcode` the reference profile carries none. The entry also decides what the effort question may ask for: `max` is offered only where the route declares it — the operator's `effort_maps` entry, or (on `anthropic`) the route's own per-family cap, which is Haiku's `max` and nobody else's.
 
 ### Session selection reconciliation (`session_selection`)
 
@@ -398,8 +398,26 @@ rejects a disable and an omitted field re-enables the model's default effort ins
 `thinking: {type: adaptive, display: summarized}` plus `output_config: {effort: …}` and the plugin rewrites
 only that effort value, inside the object the transport built. A body the transport left without an
 `output_config` — a pre-adaptive-thinking Claude, reasoning disabled, or a container carrying only
-`format` — gets no `effort` invented, and the audit then reports `effort: null`. Its caps are per family:
-Haiku `low`–`max`, Sonnet and Opus `low`–`high`, and a level outside a family's cap is omitted, not clamped.
+`format` — gets no `effort` invented, and the audit then reports `effort: null`. Its built-in caps are per
+family: Haiku `low`–`max`, Sonnet and Opus `low`–`high`, and a level outside a family's cap is omitted, not
+clamped — **unless the operator declares a range for the model** in `effort_maps`:
+
+```yaml
+effort_maps:
+  anthropic:
+    claude-haiku-5-5:  {min: medium, max: max}
+    claude-sonnet-5-5: {min: medium, max: high}
+    claude-opus-5-5:   {min: low,    max: medium}
+```
+
+A `min`/`max` entry *is* the contract: `accepted` is derived from the pair, the effort question then offers
+the **union** of the bounded grid's levels instead of their intersection (`low`, `medium`, `high`, `max`
+here — the intersection would have been a single option), and the applied level is **clamped** into the
+model's own range instead of dropped: `opus`+`high` → `medium`, `sonnet`+`max` → `high`, `haiku`+`low` →
+`medium`. A ceiling that is omitted holds nothing, because the transport then applies its own default. The
+audit proves it: `effort_requested` is what Jev asked, `effort` what went out, and the record adds
+`effort_bounds: [min, max]` plus `effort_adjusted` (`clamped_max` / `clamped_min` / `nearest_accepted`) when
+the pair bit. Routes without bounds keep the omit rule and the record's old shape.
 
 ## Audit trail
 

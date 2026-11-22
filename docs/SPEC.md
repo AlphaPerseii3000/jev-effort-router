@@ -96,7 +96,13 @@ reasoning and generation in the main model — it only steers.
   at the first request of the turn and reused for its remainder. When `route_per_turn: false`, routing decisions
   are taken once per session.
 - Effort levels are translated through a per-family mapping table, never sent as a generic parameter:
-  families that reject a level must be clamped or the field omitted (see routing-grid.md).
+  a family's declared vocabulary decides, and a level it does not accept is omitted rather than guessed —
+  unless the operator declared explicit `min`/`max` bounds for that model, in which case the level is
+  clamped onto the bound so the declared ceiling always reaches the wire (see routing-grid.md).
+- An effort question is asked once, before the model is chosen. When any model in the grid declares
+  bounds, the question offers the **union** of the models' levels (each answer is clamped per model);
+  otherwise it offers only the levels every model accepts verbatim, so an answer is never offered and
+  then dropped.
 - Python standard library only in the hot path; the plugin declares `httpx` as a dependency rather than
   reaching for a vendored HTTP client.
 - Repository is public with an open-source license (MIT) and a README that lets a stranger install,
@@ -144,8 +150,10 @@ the configured model.
 ## Open Questions
 
 - Should `reasoning_effort` for models the Ollama:cloud wire cannot express be *omitted* (server default)
-  or clamped to the nearest weaker level? Current contract: clamp low/medium/high onto the family's
-  accepted set, and omit rather than send a level the family would reject.
+  or clamped to the nearest weaker level? Resolved for **declared** routes: clamp only where the operator
+  declared `min`/`max` bounds for the model (`effort.resolve_bounded_effort`), omit everywhere else — a
+  level a declaration does not carry is never invented. The legacy `ollama-cloud` family table keeps its
+  nearest-weaker clamp for compatibility.
 - Is a per-turn route on *every* message the right default, or should the plugin expose
   `route_once_per_session` alongside it? Implemented via `route_per_turn`: defaults to `true` (per turn), and when set to `false` routes once per session.
 - Should the grid's model ids be validated live against `GET https://ollama.com/v1/models` at startup,

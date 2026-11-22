@@ -74,16 +74,18 @@ and sends only `reasoning_effort`: a Choice over one option has one possible ans
 latency. The model is then `grid[0]` and the audit records `model_choice: "single"`. A model answer
 the endpoint volunteers for that question is ignored.
 
-`reasoning_effort` lists only the levels the route can actually be given (`effort.offered_levels`,
-the intersection of `EFFORT_LEVELS` with the accepted levels of the provider's `effort_maps` entry
-for every model on the grid). `max` is offered only where a map declares it; a route with no map
-keeps `low`/`medium`/`high`. The answer is validated as a level and then resolved against the
-route's declaration: a level the declaration does not carry is omitted from the wire (never clamped
-to a weaker rung), and the audit keeps the asked level in `effort_requested` beside the applied
-`effort`. The same holds for a level the *question* did not offer — an answer naming `max` where
-only `low`/`medium`/`high` were asked is recorded as asked and omitted from the wire, even though
-the route's built-in policy declares `max`: the offered set is the contract, on a fresh decision and
-on a memo replay alike.
+`reasoning_effort` lists only the levels the route can actually be given (`effort.offered_levels`, the
+intersection of `EFFORT_LEVELS` with the accepted levels of the provider's `effort_maps` entry for every
+model on the grid — or, when a model on the grid declares `min`/`max` bounds, the **union** of the models'
+levels, because a bounded model clamps an answer it cannot take). `max` is offered only where a map
+declares it; a route with no map keeps `low`/`medium`/`high`. The answer is validated as a level and then
+resolved against the route's declaration: a level the declaration does not carry is omitted from the wire
+(never clamped to a weaker rung), except that a model with declared bounds is clamped onto the nearest
+bound, and the audit keeps the asked level in `effort_requested` beside the applied `effort` (plus
+`effort_bounds` and `effort_adjusted` on a bounded model). The same holds for a level the *question* did
+not offer — an answer naming `max` where only `low`/`medium`/`high` were asked is recorded as asked and
+omitted from the wire, even though the route's built-in policy declares `max`: the offered set is the
+contract, on a fresh decision and on a memo replay alike.
 
 The optional turn signal is the only conversation state beyond `recent_context`:
 

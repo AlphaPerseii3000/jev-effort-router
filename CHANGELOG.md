@@ -4,6 +4,77 @@ All notable changes to this project are documented here.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres to
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.8.1] - 2026-11-22
+
+### Added
+
+- **Per-model effort bounds (`min`/`max`) in an operator `effort_maps` entry.** A model entry may
+  now declare a pair instead of a level list:
+
+  ```yaml
+  effort_maps:
+    anthropic:
+      claude-haiku-5-5:  {min: medium, max: max}
+      claude-sonnet-5-5: {min: medium, max: high}
+      claude-opus-5-5:   {min: low,    max: medium}
+  ```
+
+  The pair *is* the contract: `accepted` is derived from it (`effort.levels_within`, the askable
+  levels between the bounds inclusive), a request inside the pair goes out verbatim, and a request
+  outside it is **clamped to the nearest bound** (`effort.resolve_bounded_effort`). One open side
+  is filled from the askable vocabulary (`low` / `max`), a bound outside it is refused, and an
+  `accepted` list that disagrees with the bounds makes the entry declare nothing rather than
+  letting one key silently win.
+- **The effort question offers the union of a bounded grid.** `offered_levels_for_grid` kept
+  intersecting the models' sets, so the three-model `anthropic` grid with the bounds above would
+  have offered one option (`medium`) and every routed turn would have landed there. A grid with at
+  least one bounded model now offers the **union** (`low`, `medium`, `high`, `max`), because a
+  bounded model clamps whatever it cannot take. A grid with no bounds keeps the intersection.
+- **The audit proves the clamp.** A route record for a bounded model now carries `effort_bounds:
+  [min, max]` and, only when the pair actually bit, `effort_adjusted: "clamped_max"` /
+  `"clamped_min"` (or `"nearest_accepted"` for a rung inside the bounds the vocabulary does not
+  carry, e.g. `xhigh`). `effort_requested` keeps the request and `effort` the applied value, so a
+  capped turn can no longer be read as if the stronger level had run. Records for routes without
+  bounds keep exactly their previous shape.
+
+### Changed
+
+- **"Omitted, never clamped" now has one documented exception.** An operator entry with bounds
+  clamps instead of omitting, because an omitted level falls back to the transport's own default
+  and a declared ceiling that is dropped holds nothing. Everything else is unchanged: a map with an
+  `accepted` list keeps the declarative omit rule, the strict built-in policies keep their own
+  vocabularies, and the legacy `ollama-cloud` family table keeps its nearest-weaker clamp. An entry
+  for a provider with no bounded model changes nothing at all.
+- **A bounded model is exempt from the "unoffered level" gate** in all three deciders
+  (`jev`, `openai_compatible`, `jev_console`) and in the memo replay. The gate exists to keep a
+  well-formed but unoffered level off the wire; on a bounded model the level is clamped instead, so
+  dropping it would hand the turn to the transport's default — above the ceiling. Every call site
+  passes `model`/`provider`/`effort_maps` to `_offered_wire_effort`.
+- `docs/SPEC.md`, `docs/routing-grid.md`, `docs/jev-decisions-api.md`, `README.md` and
+  `plugin.yaml` document the bounded contract, the union question and the two audit keys, including
+  the mixed-grid caveat (a grid with bounded *and* `accepted`-only models offers the union, but the
+  unbounded model still omits a level outside its list).
+
+### Added (tests)
+
+- `tests/test_effort_bounds.py`: the declaration (derivation, one open side, contradictory and
+  unorderable pairs, per-model lookup), the union question, all twelve model×level clamps with their
+  audit reason, the "a bounded model never drops the field" invariant, the `xhigh` gap case, the
+  three deciders applying the same clamp, the compatibility paths (accepted-only map still omits,
+  built-in caps still omit, legacy Ollama clamp untouched), and the wire/audit end to end —
+  including a replay that re-applies the declaration to a memo written before the bounds existed.
+
+### Notes
+
+- **Rebased onto 0.8.0 (`399f34c`).** This release is the bounds work replayed on top of the 0.8.0
+  removal commit, so the removals stand: there is no `claude-subscription-directsdk-experimental`
+  route, no route-specific wire-style layer, no `[1m]` context variant and none of the four knobs
+  (`confidence_threshold_per_decider`, `effort_criteria`, `effort_instructions`,
+  `platform_overrides`). With `platform_overrides` gone there is no per-surface `max_effort` cap any
+  more, so the bounds are applied to the level the decider produced — the cap-versus-bounds
+  attribution this work carried on its 0.7.1 base (`Decision.effort_capped`, the
+  `effort_capped` audit key) is not part of this release because its subject no longer exists.
+
 ## [0.8.0] - 2026-11-15
 
 ### Removed (breaking)
