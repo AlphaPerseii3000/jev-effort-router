@@ -8,6 +8,10 @@ Three properties are pinned here, all of them cost-relevant:
    ``effort`` keeps what was applied.
 3. The effort question and the accepted answer keys come from the same offered set, and the
    payload still fits the budget with a full context.
+
+The omit rule below is the contract for a **vocabulary** declaration (an ``accepted`` list, a
+built-in policy, the legacy family table). An entry that declares ``min``/``max`` bounds is the
+documented exception and is covered by ``tests/test_effort_bounds.py``: it clamps onto the pair.
 """
 
 from __future__ import annotations

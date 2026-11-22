@@ -11,6 +11,11 @@ The rule these tests pin is the one the branch applies to every declaration: an 
 neighbour and never a reason to lose the model decision. Pinned on all three deciders, on the memo
 replay, and on the ``default_effort`` knob.
 
+That is the rule for an ``accepted`` list. An entry that declares ``min``/``max`` bounds is the one
+documented exception (`tests/test_effort_bounds.py`): it clamps onto its own pair instead of omitting,
+because an omitted level falls back to the transport's default and the declared ceiling would hold
+nothing.
+
 The route used to demonstrate it is ``opencode-go`` with an operator map that drops ``max``: its
 *built-in* policy now offers ``max`` too, so the map is the only way to narrow the question.
 """
